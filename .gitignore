@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Rust build
+src-tauri/target/
+
+# Vite build output (we want source, not dist)
+dist/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Temp
+_gen*.js
+_write_*.js
+/tmp/
