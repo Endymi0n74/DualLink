@@ -1,6 +1,6 @@
 # 🌐 DualLink
 
-**Gestionnaire de cartes réseau Windows** — Partagez et mutualisez vos connexions internet (téléphone + Freebox ADSL) avec un failover automatique intelligent.
+**Gestionnaire de cartes réseau Windows** — Partagez et mutualisez vos connexions internet (téléphone + Box par exemple) avec un failover automatique intelligent.
 
 ![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen)
 
@@ -8,7 +8,7 @@
 
 ## 🎯 Pourquoi DualLink ?
 
-Vous avez une **Freebox ADSL** qui rame et un **partage de connexion téléphone** ? DualLink vous permet de :
+Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ? DualLink vous permet de :
 
 - **Activer/désactiver** chaque carte réseau individuellement
 - **Load Balancing** — répartir le trafic entre vos connexions
