@@ -110,7 +110,7 @@ npx tauri build
 
 ### Télécharger l'installeur
 
-Téléchargez `DualLink_1.0.0_x64-setup.exe` depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases).
+Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases).
 
 ### Lancer
 
