@@ -86,7 +86,7 @@ cd dualink && npm run tauri:build
 - **PowerShell (hidden)**: adapter management (list/enable/disable/metrics) uses `run_powershell()` which wraps `run_hidden_command()` with `CREATE_NO_WINDOW` flag
 - **No visible process spawn**: ALL `Command::new()` calls go through `run_hidden_command()` which applies `creation_flags(CREATE_NO_WINDOW)` on Windows. Expert mode uses single batch PS script (no multiple process spawns).
 - **Background monitoring**: `tauri::async_runtime::spawn` (NOT `tokio::spawn`) with configurable interval (default 5s, re-read each tick via RwLock). Adapter list cached (default 30s). No per-adapter ping. Uses `sleep` instead of `interval` for dynamic reconfiguration. Write lock released before network I/O (failover metrics swap) to avoid blocking the monitor loop and Tauri commands.
-- **System tray**: minimize to tray on X click, context menu "Afficher"/"Quitter", icon.png embedded
+- **System tray**: X hides window to tray, "Quitter" exits + cleans lock file. Context menu: Afficher/Quitter
 - **19 Tauri commands**: list_adapters, enable_adapter, disable_adapter, test_connectivity, test_adapter_connectivity, set_routing_metric, configure_load_balancing, configure_failover, get_monitor_state, enable_auto_failover, disable_auto_failover, get_failover_state, get_settings, save_settings, get_logs, get_log_files, get_log_by_date, get_adapter_details, get_all_adapter_details
 
 ## 🔬 Expert Mode Architecture
@@ -107,11 +107,11 @@ cd dualink && npm run tauri:build
 - **Auto failover**: ✅ Debounced (2 failures = 10s failover, 3 successes = 15s recovery). Banner UI.
 - **Settings configurable**: ✅ Ping interval, target IP, adapter refresh — persisted in settings.json, UI tab.
 - **Frontend**: ✅ Vite build OK, dist/ has CSS + JS assets
-- **Code stats**: ~2100 lines total (1100 Rust + 680 JS + 180 CSS)
+- **Code stats**: ~2200 lines total (1150 Rust + 700 JS + 180 CSS)
 - **Single instance**: ✅ File lock with PID check prevents double launch
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
 - **Ready for testing**: ✅ No publish, no release — exe in target/release/
-- **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — branch master
+- **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.0.0 released with NSIS + MSI
 - **README**: ✅ Documentation complète (features, architecture, build, backlog)
 
 ## ⏳ Backlog (après tests)
@@ -127,7 +127,7 @@ cd dualink && npm run tauri:build
 10. **Crash reporting** — envoyer logs panic vers endpoint
 
 ## ⚠️ Known Issues / TODO
-- **Bundle disabled**: `"bundle": {"active": false}` in tauri.conf.json — no NSIS/MSI installer yet.
+- **Bundle**: ✅ NSIS (2.6 MB) + MSI (3.8 MB) generated via `tauri build`. Language: FR (1036).
 - **File logging**: ✅ `logger.rs` writes to `%LOCALAPPDATA%/DualLink/logs/YYYY-MM-DD.log`. Logs startup, all Tauri commands, monitor errors, and panics via custom hook. One file per day, append mode.
 - **CSP is null**: Security CSP is disabled. Should add proper CSP for production.
 
