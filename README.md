@@ -122,16 +122,6 @@ Téléchargez `DualLink_1.0.0_x64-setup.exe` depuis les [Releases GitHub](https:
 
 ---
 
-## 📦 Installateurs
-
-| Format | Taille | Lien |
-|--------|--------|------|
-| NSIS (.exe) | ~2.6 MB | `DualLink_1.0.0_x64-setup.exe` |
-| MSI (.msi) | ~3.8 MB | `DualLink_1.0.0_x64_en-US.msi` |
-| Portable (.exe) | ~11.8 MB | `duallink.exe` |
-
----
-
 ## 📊 Process Budget
 
 | Source | Avant | Après |
