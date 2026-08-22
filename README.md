@@ -157,21 +157,6 @@ Types : ERROR (rouge), FAILOVER (orange), CMD (bleu), Monitor (vert)
 
 ---
 
-## 🐛 Corrections (v1.0.0)
-
-1. tokio::spawn panic → tauri::async_runtime::spawn
-2. Tray icon crash → PNG au lieu de ICO
-3. Double tray → supprimé
-4. Fenêtres PowerShell → CREATE_NO_WINDOW
-5. Admin elevation → app.manifest requireAdministrator
-6. Trop de process → per-adapter ping supprimé
-7. Ping FR → parser temps=/durée= ajouté
-8. Expert lent → batch PS unique
-9. Lock monitor → write lock libéré avant I/O réseau
-10. Double lancement → file lock PID-based
-
----
-
 ## 📄 Licence
 
 MIT — Fait avec ❤️ et Tauri 2
