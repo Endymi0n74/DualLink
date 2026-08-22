@@ -76,7 +76,8 @@ cd dualink && npm run tauri:build
 6. **Too many processes in monitoring** — 7-9 processes/5s. Fixed by removing per-adapter pings + caching. Result: ~1 process/5s.
 7. **Ping latency always None on FR Windows** — `ping.exe` outputs `temps=`/`durée=` instead of `time=`. Fixed in `network.rs` parser.
 8. **Expert mode slow + PS windows** — 5N+1 separate PS processes. Fixed by batching into single PS script.
-9. **Monitor write lock blocking** — Failover held write lock during `set_routing_metric()`. Fixed: actions under lock, execute outside lock.
+10. **Icon not RGBA for Linux/macOS** — icon.png was RGB. Fixed by converting to RGBA.
+11. **Monitor write lock blocking** — Failover held write lock during `set_routing_metric()`. Fixed: actions under lock, execute outside lock.
 
 ## 🧩 Architecture Decisions
 - **No framework**: vanilla JS (no React/Vue) — lightweight, fast
@@ -112,11 +113,12 @@ cd dualink && npm run tauri:build
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
 - **Ready for testing**: ✅ No publish, no release — exe in target/release/
 - **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.0.1 released
+- **Releases**: NSIS (Windows), MSI (Windows), ZIP portable (Windows), DMG (macOS), AppImage (Linux), deb (Linux)
 - **CI/CD**: ✅ GitHub Actions multi-platform (Windows/macOS/Linux), triggered by v* tags
 - **README**: ✅ Documentation complète (features, architecture, build, backlog)
 
 ## ⏳ Backlog (après tests)
-1. **Bundle NSIS** — activer `"active": true` dans `tauri.conf.json` pour installeur distribuable
+1. ~~Bundle NSIS~~ ✅ Activé `"active": true` dans `tauri.conf.json` pour installeur distribuable
 2. **Notifications Windows** (toasts) quand le failover bascule
 3. **Autostart Windows** — lancer DualLink au démarrage
 4. **CSP (Content Security Policy)** — sécuriser le frontend pour production
@@ -128,7 +130,7 @@ cd dualink && npm run tauri:build
 10. **Crash reporting** — envoyer logs panic vers endpoint
 
 ## ⚠️ Known Issues / TODO
-- **Bundle**: ✅ NSIS (2.6 MB) + MSI (3.8 MB) generated via `tauri build`. Language: FR (1036).
+- **Bundle**: ✅ NSIS + MSI + ZIP portable + DMG + AppImage + deb — all generated via `tauri build`. Language: FR (1036).
 - **File logging**: ✅ `logger.rs` writes to `%LOCALAPPDATA%/DualLink/logs/YYYY-MM-DD.log`. Logs startup, all Tauri commands, monitor errors, and panics via custom hook. One file per day, append mode.
 - **CSP is null**: Security CSP is disabled. Should add proper CSP for production.
 
