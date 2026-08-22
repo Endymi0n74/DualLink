@@ -111,7 +111,8 @@ cd dualink && npm run tauri:build
 - **Single instance**: ✅ File lock with PID check prevents double launch
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
 - **Ready for testing**: ✅ No publish, no release — exe in target/release/
-- **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.0.0 released with NSIS + MSI
+- **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.0.1 released
+- **CI/CD**: ✅ GitHub Actions multi-platform (Windows/macOS/Linux), triggered by v* tags
 - **README**: ✅ Documentation complète (features, architecture, build, backlog)
 
 ## ⏳ Backlog (après tests)
