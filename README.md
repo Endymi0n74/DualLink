@@ -2,7 +2,7 @@
 
 **Gestionnaire de cartes réseau Windows** — Partagez et mutualisez vos connexions internet (téléphone + Freebox ADSL) avec un failover automatique intelligent.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen)
 
 ---
 
@@ -14,6 +14,7 @@ Vous avez une **Freebox ADSL** qui rame et un **partage de connexion téléphone
 - **Load Balancing** — répartir le trafic entre vos connexions
 - **Failover automatique** — si une connexion tombe, bascule sur l'autre sans intervention
 - **Monitorer** la latence en temps réel avec un graphique canvas
+- **Mode Expert** — voir IP, passerelle, DNS, DHCP, métrique par adapter
 
 ---
 
@@ -25,11 +26,13 @@ Vous avez une **Freebox ADSL** qui rame et un **partage de connexion téléphone
 | ⚖️ **Load Balancing** | Métriques dynamiques pour répartir le trafic |
 | 🛡️ **Failover auto** | Détection de perte (2 échecs) → bascule. Restauration (3 succès) → retour |
 | 📊 **Dashboard temps réel** | Graphique canvas de latence, stats min/max/moyenne, historique 10 mesures |
+| 🔬 **Mode Expert** | IP, masque, passerelle, DNS, DHCP, métrique routing par adapter |
 | ⚙️ **Settings configurables** | Intervalle ping, cible IP, refresh adapters — persistés en JSON |
 | 📋 **Log viewer** | Onglet logs avec auto-refresh, coloration par type, sélecteur date |
 | 🔲 **System tray** | Minimise dans la barre des tâches au lieu de fermer |
 | 🔒 **Admin auto** | Demande les droits admin au lancement (UAC) |
 | 🚫 **Zero fenêtres** | Aucune fenêtre PowerShell visible — tout est en arrière-plan |
+| 🔒 **Single instance** | Un seul exemplaire autorisé — pas de doublons tray |
 
 ---
 
@@ -52,6 +55,10 @@ Vous avez une **Freebox ADSL** qui rame et un **partage de connexion téléphone
 - Coloration : 🔴 ERROR, 🟠 FAILOVER, 🔵 CMD, 🟢 Monitor
 - Sélecteur de date
 
+### Onglet Expert
+- Détails réseau par adapter : IP, masque, passerelle, DNS, DHCP, métrique
+- Bouton actualiser
+
 ---
 
 ## 🏗️ Architecture
@@ -60,7 +67,7 @@ Vous avez une **Freebox ADSL** qui rame et un **partage de connexion téléphone
 Frontend (Vanilla JS)          Backend (Rust / Tauri 2)
 ┌─────────────────────┐       ┌──────────────────────────┐
 │  index.html         │       │  lib.rs                  │
-│  src/styles.css     │◄─────►│  17 Tauri commands       │
+│  src/styles.css     │◄─────►│  19 Tauri commands       │
 │  src/api.js         │       │  monitor.rs (background) │
 │  src/ui.js          │       │  network.rs (ping/PS)    │
 │  src/app.js         │       │  logger.rs (file logs)   │
@@ -76,6 +83,7 @@ Frontend (Vanilla JS)          Backend (Rust / Tauri 2)
 - **Frontend** : Vanilla JS (aucun framework), CSS glassmorphism dark theme
 - **Backend** : Rust avec Tauri 2, async runtime Tokio
 - **Monitoring** : ~1 process système par tick de 5s (optimisé)
+- **Single instance** : File lock PID-based, pas de double lancement
 - **Persistance** : settings.json + logs journaliers dans `%LOCALAPPDATA%/DualLink/`
 
 ---
@@ -94,62 +102,33 @@ Frontend (Vanilla JS)          Backend (Rust / Tauri 2)
 ### Depuis les sources
 
 ```bash
-# Cloner le repo
 git clone https://github.com/Endymi0n74/DualLink.git
 cd DualLink
-
-# Installer les dépendances frontend
 npm install
-
-# Builder le frontend
-npx vite build
-
-# Builder l'exe release
-cd src-tauri
-cargo build --release
+npx tauri build
 ```
 
-L'exe sera dans : `src-tauri/target/release/netmanager-lib.exe`
+### Télécharger l'installeur
+
+Téléchargez `DualLink_1.0.0_x64-setup.exe` depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases).
 
 ### Lancer
 
 ```bash
-# Double-cliquer sur netmanager-lib.exe
-# Ou depuis un terminal :
-netmanager-lib.exe
+# Double-cliquer sur duallink.exe ou l'installeur NSIS
 ```
 
 > ⚠️ L'application demande les **droits admin** au lancement (UAC) pour gérer les cartes réseau.
 
 ---
 
-## 📁 Structure du projet
+## 📦 Installateurs
 
-```
-DualLink/
-├── index.html                # Point d'entrée HTML
-├── package.json              # npm config
-├── vite.config.js            # Config Vite (dev server port 1421)
-├── src/
-│   ├── styles.css            # Theme glassmorphism dark
-│   ├── api.js                # Wrappers Tauri invoke
-│   ├── ui.js                 # Rendu DOM, toggles, dashboard, failover
-│   └── app.js                # Point d'entrée JS + listener monitoring
-└── src-tauri/
-    ├── Cargo.toml            # Deps Rust
-    ├── build.rs              # Embed UAC manifest
-    ├── tauri.conf.json       # Config Tauri
-    ├── app.manifest          # Manifest UAC (requireAdministrator)
-    ├── icons/
-    │   ├── icon.ico          # Icône Windows
-    │   └── icon.png          # Icône tray
-    └── src/
-        ├── main.rs           # Entry point
-        ├── lib.rs            # Commands Tauri + setup
-        ├── logger.rs         # Logger fichier + panic hook
-        ├── network.rs        # Ping natif + PowerShell caché
-        └── monitor.rs        # Monitoring background
-```
+| Format | Taille | Lien |
+|--------|--------|------|
+| NSIS (.exe) | ~2.6 MB | `DualLink_1.0.0_x64-setup.exe` |
+| MSI (.msi) | ~3.8 MB | `DualLink_1.0.0_x64_en-US.msi` |
+| Portable (.exe) | ~11.8 MB | `duallink.exe` |
 
 ---
 
@@ -174,6 +153,7 @@ Internet UP   → 3 succès consécutifs (15s) → Restaure primary
 - **Debouncing** anti-flapping
 - Métriques swap automatique (metric 10 → 100)
 - Banner UI avec statut standby/actif + bouton désactiver
+- Lock libéré avant appels réseau — pas de blocage du monitor
 
 ---
 
@@ -187,14 +167,18 @@ Types : ERROR (rouge), FAILOVER (orange), CMD (bleu), Monitor (vert)
 
 ---
 
-## 🗺️ Backlog
+## 🐛 Corrections (v1.0.0)
 
-- [ ] Bundle NSIS (installeur distribuable)
-- [ ] Notifications Windows (toasts failover)
-- [ ] Autostart Windows
-- [ ] Mode expert (métriques IP/route/gateway)
-- [ ] Tauri Updater (auto-update)
-- [ ] Multi-langue (FR/EN)
+1. tokio::spawn panic → tauri::async_runtime::spawn
+2. Tray icon crash → PNG au lieu de ICO
+3. Double tray → supprimé
+4. Fenêtres PowerShell → CREATE_NO_WINDOW
+5. Admin elevation → app.manifest requireAdministrator
+6. Trop de process → per-adapter ping supprimé
+7. Ping FR → parser temps=/durée= ajouté
+8. Expert lent → batch PS unique
+9. Lock monitor → write lock libéré avant I/O réseau
+10. Double lancement → file lock PID-based
 
 ---
 

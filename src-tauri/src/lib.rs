@@ -12,7 +12,7 @@ use tauri::{
 use tokio::sync::RwLock;
 
 use monitor::{MonitorState, FailoverConfig, FailoverState, Settings};
-use network::{ConnectivityResult, NetworkAdapter};
+use network::{ConnectivityResult, NetworkAdapter, AdapterDetails};
 
 struct AppState {
     monitor_state: Arc<RwLock<MonitorState>>,
@@ -132,13 +132,22 @@ async fn disable_auto_failover(
     state: tauri::State<'_, AppState>,
 ) -> Result<FailoverState, String> {
     logger::log_file("CMD disable_auto_failover");
-    let mut monitor = state.monitor_state.write().await;
-    // Restore primary metrics if we were in failover
-    if monitor.failover.is_failed_over {
-        let _ = network::set_routing_metric(monitor.failover.config.primary_index, 10);
-        let _ = network::set_routing_metric(monitor.failover.config.secondary_index, 100);
+    // Read state to determine actions, release lock before network I/O
+    let (was_failed_over, primary_idx, secondary_idx) = {
+        let monitor = state.monitor_state.read().await;
+        (
+            monitor.failover.is_failed_over,
+            monitor.failover.config.primary_index,
+            monitor.failover.config.secondary_index,
+        )
+    };
+    if was_failed_over {
+        let _ = network::set_routing_metric(primary_idx, 10);
+        let _ = network::set_routing_metric(secondary_idx, 100);
         logger::log_file("CMD disable_auto_failover: restored primary metrics");
     }
+    // Now update state
+    let mut monitor = state.monitor_state.write().await;
     monitor.failover.config.enabled = false;
     monitor.failover.is_failed_over = false;
     Ok(monitor.failover.clone())
@@ -156,6 +165,39 @@ async fn get_failover_state(
 async fn get_settings(state: tauri::State<'_, AppState>) -> Result<Settings, String> {
     let s = state.settings.read().await;
     Ok(s.clone())
+}
+
+#[tauri::command]
+fn get_logs() -> Result<String, String> {
+    Ok(logger::read_today_log())
+}
+
+#[tauri::command]
+fn get_log_files() -> Result<Vec<String>, String> {
+    Ok(logger::list_log_files())
+}
+
+#[tauri::command]
+fn get_log_by_date(date: String) -> Result<String, String> {
+    Ok(logger::read_log_file(&date))
+}
+
+#[tauri::command]
+fn get_adapter_details(name: String) -> Result<AdapterDetails, String> {
+    logger::log_file(&format!("CMD get_adapter_details: {}", name));
+    network::get_adapter_details(&name).map_err(|e| {
+        logger::log_file(&format!("CMD get_adapter_details '{}' ERROR: {}", name, e));
+        e.to_string()
+    })
+}
+
+#[tauri::command]
+fn get_all_adapter_details() -> Result<Vec<AdapterDetails>, String> {
+    logger::log_file("CMD get_all_adapter_details");
+    network::get_all_adapter_details().map_err(|e| {
+        logger::log_file(&format!("CMD get_all_adapter_details ERROR: {}", e));
+        e.to_string()
+    })
 }
 
 #[tauri::command]
@@ -184,6 +226,26 @@ async fn save_settings(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Single-instance check: file lock in %LOCALAPPDATA%/DualLink/
+    {
+        let lock_path = dirs_lock_path();
+        if lock_path.exists() {
+            // Check if the PID in the lock file is still alive
+            if let Ok(pid_str) = std::fs::read_to_string(&lock_path) {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    if is_process_alive(pid) {
+                        logger::init();
+                        logger::log_file("Another instance already running, exiting.");
+                        return;
+                    }
+                }
+            }
+            // Stale lock — previous instance crashed
+            let _ = std::fs::remove_file(&lock_path);
+        }
+        let _ = std::fs::write(&lock_path, std::process::id().to_string());
+    }
+
     logger::init();
     logger::log_file("DualLink starting...");
     let monitor_state = Arc::new(RwLock::new(MonitorState::default()));
@@ -209,6 +271,11 @@ pub fn run() {
             get_failover_state,
             get_settings,
             save_settings,
+            get_logs,
+            get_log_files,
+            get_log_by_date,
+            get_adapter_details,
+            get_all_adapter_details,
         ])
         .setup(move |app| {
             // ── System Tray ──
@@ -239,13 +306,21 @@ pub fn run() {
                         }
                     }
                     "quit" => {
+                        // Clean up lock file
+                        let lock = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
+                        let _ = std::fs::remove_file(std::path::PathBuf::from(lock).join("DualLink").join("app.lock"));
+                        // Force destroy window and exit
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.destroy();
+                        }
                         app.exit(0);
                     }
                     _ => {}
                 })
                 .build(app)?;
 
-            // ── Window close = minimize to tray ──
+            // ── Window close = hide to tray ──
+            // X button hides the window; only "Quitter" in tray menu exits
             if let Some(window) = app.get_webview_window("main") {
                 let w_clone = window.clone();
                 window.on_window_event(move |event| {
@@ -265,3 +340,25 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running DualLink");
 }
+
+fn dirs_lock_path() -> std::path::PathBuf {
+    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(base).join("DualLink").join("app.lock")
+}
+
+#[cfg(windows)]
+fn is_process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows_sys::Win32::Foundation::CloseHandle;
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h != std::ptr::null_mut() {
+            CloseHandle(h);
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(windows))]
+fn is_process_alive(_pid: u32) -> bool { false }

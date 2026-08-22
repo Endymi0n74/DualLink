@@ -126,7 +126,6 @@ impl Default for MonitorState {
         }
     }
 }
-
 pub fn start_monitor(
     app_handle: tauri::AppHandle,
     state: Arc<RwLock<MonitorState>>,
@@ -135,22 +134,16 @@ pub fn start_monitor(
     logger::log_file("Monitor started");
     tauri::async_runtime::spawn(async move {
         use tokio::time::Duration;
-
         let mut tick_count: u64 = 0;
-
-        // Cached adapter list
         let mut cached_adapters: Vec<network::NetworkAdapter> = Vec::new();
-
-        // Consecutive failures for debouncing (avoid flapping)
         let mut consecutive_failures: u32 = 0;
-        const FAILOVER_THRESHOLD: u32 = 2; // 2 consecutive failures = 10s before failover
-        const RECOVERY_THRESHOLD: u32 = 3; // 3 consecutive successes = 15s before recovery
         let mut consecutive_successes: u32 = 0;
+        const FAILOVER_THRESHOLD: u32 = 2;
+        const RECOVERY_THRESHOLD: u32 = 3;
 
         loop {
             tick_count += 1;
 
-            // 0. Read settings (cheap RwLock read)
             let (interval_secs, ping_target, adapter_refresh_secs) = {
                 let s = settings.read().await;
                 (s.interval_secs.max(1), s.ping_target.clone(), s.adapter_refresh_secs.max(5))
@@ -158,32 +151,21 @@ pub fn start_monitor(
             let refresh_interval = if interval_secs > 0 { adapter_refresh_secs / interval_secs } else { 6 };
             let refresh_interval = refresh_interval.max(1);
 
-            // 1. Ping internet with configured target (1 process: ping.exe — hidden)
             let connectivity = network::test_connectivity_to(&ping_target).unwrap_or_else(|e| {
                 logger::log_file(&format!("Monitor ping ERROR ({}): {}", ping_target, e));
-                network::ConnectivityResult {
-                    reachable: false,
-                    latency_ms: None,
-                }
+                network::ConnectivityResult { reachable: false, latency_ms: None }
             });
 
-            // 2. Refresh adapter list every N ticks (configurable)
             if tick_count % refresh_interval == 1 || cached_adapters.is_empty() {
                 match network::list_adapters() {
                     Ok(adapters) => {
                         cached_adapters = adapters;
-                        logger::log_file(&format!(
-                            "Monitor adapters refreshed: {} found",
-                            cached_adapters.len()
-                        ));
+                        logger::log_file(&format!("Monitor adapters refreshed: {} found", cached_adapters.len()));
                     }
-                    Err(e) => {
-                        logger::log_file(&format!("Monitor list_adapters ERROR: {}", e));
-                    }
+                    Err(e) => { logger::log_file(&format!("Monitor list_adapters ERROR: {}", e)); }
                 }
             }
 
-            // 3. Build adapter statuses — NO per-adapter ping (redundant with global ping)
             let adapter_statuses: Vec<AdapterStatus> = cached_adapters
                 .iter()
                 .filter(|a| a.is_connected)
@@ -194,8 +176,9 @@ pub fn start_monitor(
                 })
                 .collect();
 
-            // 4. Auto-failover logic
+            // Auto-failover: determine actions under lock, execute outside lock
             let mut failover_action = String::new();
+            let mut metrics_to_set: Vec<(u32, u32)> = Vec::new();
             {
                 let mut state_guard = state.write().await;
                 let fo = &mut state_guard.failover;
@@ -204,78 +187,64 @@ pub fn start_monitor(
                     if !connectivity.reachable {
                         consecutive_failures += 1;
                         consecutive_successes = 0;
-
-                        // Debounce: only failover after N consecutive failures
                         if consecutive_failures >= FAILOVER_THRESHOLD && !fo.is_failed_over {
                             logger::log_file(&format!(
-                                "FAILOVER: switching to secondary adapter '{}' (index {}) after {} failures",
+                                "FAILOVER: switching to secondary '{}' ({}) after {} failures",
                                 fo.config.secondary_name, fo.config.secondary_index, consecutive_failures
                             ));
-                            // Switch: secondary = metric 10 (priority), primary = metric 100
-                            let _ = network::set_routing_metric(fo.config.secondary_index, 10);
-                            let _ = network::set_routing_metric(fo.config.primary_index, 100);
+                            metrics_to_set.push((fo.config.secondary_index, 10));
+                            metrics_to_set.push((fo.config.primary_index, 100));
                             fo.is_failed_over = true;
                             fo.failover_count += 1;
                             fo.last_switch = chrono_now();
-                            failover_action = format!(
-                                "🔄 Failover → {}",
-                                fo.config.secondary_name
-                            );
+                            failover_action = format!("🔄 Failover → {}", fo.config.secondary_name);
                         }
                     } else {
                         consecutive_successes += 1;
                         consecutive_failures = 0;
-
-                        // Recovery: only restore after N consecutive successes
                         if consecutive_successes >= RECOVERY_THRESHOLD && fo.is_failed_over {
                             logger::log_file(&format!(
-                                "FAILOVER RECOVERY: restoring primary adapter '{}' (index {}) after {} successes",
+                                "FAILOVER RECOVERY: restoring primary '{}' ({}) after {} successes",
                                 fo.config.primary_name, fo.config.primary_index, consecutive_successes
                             ));
-                            // Restore: primary = metric 10, secondary = metric 100
-                            let _ = network::set_routing_metric(fo.config.primary_index, 10);
-                            let _ = network::set_routing_metric(fo.config.secondary_index, 100);
+                            metrics_to_set.push((fo.config.primary_index, 10));
+                            metrics_to_set.push((fo.config.secondary_index, 100));
                             fo.is_failed_over = false;
                             fo.last_switch = chrono_now();
-                            failover_action = format!(
-                                "✅ Restauré → {}",
-                                fo.config.primary_name
-                            );
+                            failover_action = format!("✅ Restauré → {}", fo.config.primary_name);
                         }
                     }
                 }
             }
+            // Execute network calls WITHOUT holding any lock
+            for (idx, metric) in &metrics_to_set {
+                let _ = network::set_routing_metric(*idx, *metric);
+            }
 
             let now = chrono_now();
 
-            // 5. Build final state
-            let new_state = {
-                let state_guard = state.read().await;
-                MonitorState {
-                    internet_reachable: connectivity.reachable,
-                    overall_latency_ms: connectivity.latency_ms,
-                    adapters: adapter_statuses,
-                    last_check: now.clone(),
+            // Write state + build payload in one write lock
+            let event_payload = {
+                let mut state_guard = state.write().await;
+                state_guard.internet_reachable = connectivity.reachable;
+                state_guard.overall_latency_ms = connectivity.latency_ms;
+                state_guard.adapters = adapter_statuses;
+                state_guard.last_check = now.clone();
+
+                let mut payload = MonitorState {
+                    internet_reachable: state_guard.internet_reachable,
+                    overall_latency_ms: state_guard.overall_latency_ms,
+                    adapters: state_guard.adapters.clone(),
+                    last_check: state_guard.last_check.clone(),
                     failover: state_guard.failover.clone(),
+                };
+                if !failover_action.is_empty() {
+                    payload.last_check = format!("{} | {}", now, failover_action);
                 }
+                payload
             };
 
-            {
-                let mut state_guard = state.write().await;
-                state_guard.internet_reachable = new_state.internet_reachable;
-                state_guard.overall_latency_ms = new_state.overall_latency_ms;
-                state_guard.adapters = new_state.adapters.clone();
-                state_guard.last_check = new_state.last_check.clone();
-            }
-
-            // Emit event with failover action if any
-            let mut event_payload = new_state.clone();
-            if !failover_action.is_empty() {
-                event_payload.last_check = format!("{} | {}", now, failover_action);
-            }
             let _ = app_handle.emit("monitoring-update", &event_payload);
-
-            // Sleep for configured interval (dynamic — re-read each tick)
             tokio::time::sleep(Duration::from_secs(interval_secs)).await;
         }
     });

@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "DualLink",
-        "width": 900,
-        "height": 620,
-        "minWidth": 700,
-        "minHeight": 500,
+        "width": 960,
+        "height": 720,
+        "minWidth": 780,
+        "minHeight": 580,
         "center": true,
         "decorations": true,
         "transparent": false,
@@ -28,6 +28,16 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   }
 }

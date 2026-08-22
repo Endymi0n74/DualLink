@@ -1,5 +1,5 @@
 [package]
-name = "netmanager-lib"
+name = "duallink"
 version = "1.0.0"
 description = "DualLink"
 edition = "2021"
@@ -15,6 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
+windows-sys = { version = "0.59", features = ["Win32_System_Threading", "Win32_Foundation"] }
 
 [features]
 default = ["custom-protocol"]

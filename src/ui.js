@@ -5,7 +5,12 @@ let currentMode = 'none';
 let monitorData = null;
 let failoverState = null;
 let settingsData = null;
-let currentView = 'main'; // 'main' | 'settings'
+let currentView = 'main'; // 'main' | 'settings' | 'logs' | 'expert'
+let logContent = '';
+let logFiles = [];
+let expertDetails = null;
+let selectedLogDate = '';
+let logAutoRefresh = null;
 const MAX_HISTORY = 10;
 let latencyHistory = [];
 
@@ -80,14 +85,22 @@ export function render() {
     + '<div class="header-nav">'
     + '<button class="nav-btn ' + (currentView === 'main' ? 'active' : '') + '" id="nav-main"><span>🏠</span> Accueil</button>'
     + '<button class="nav-btn ' + (currentView === 'settings' ? 'active' : '') + '" id="nav-settings"><span>⚙️</span> Settings</button>'
+    + '<button class="nav-btn ' + (currentView === 'logs' ? 'active' : '') + '" id="nav-logs"><span>📋</span> Logs</button>'
+    + '<button class="nav-btn ' + (currentView === 'expert' ? 'active' : '') + '" id="nav-expert"><span>🔬</span> Expert</button>'
     + '</div>'
     + '<div class="header-status"><span class="status-dot ' + (on ? 'online' : '') + '"></span><span>' + (on ? 'Connecté' : 'Déconnecté') + '</span></div>';
   app.appendChild(header);
 
   const mode = document.createElement('div');
-  if (currentView === 'settings') {
+  if (currentView === 'logs') {
+    // ── Logs View ──
+    app.appendChild(renderLogsView());
+  } else if (currentView === 'settings') {
     // ── Settings View ──
     app.appendChild(renderSettingsView());
+  } else if (currentView === 'expert') {
+    // ── Expert View ──
+    app.appendChild(renderExpertView());
   } else {
     // ── Main View ──
     mode.className = 'glass';
@@ -282,6 +295,80 @@ function drawDashboardCanvas() {
   drawThreshold(100, 'rgba(255,170,34,.5)', '100');
 }
 
+// ─── Logs ─────────────────────────────────────────────────────
+
+async function loadLogs() {
+  try {
+    if (!selectedLogDate) {
+      logContent = await api.getLogs();
+    } else {
+      logContent = await api.getLogByDate(selectedLogDate);
+    }
+    logFiles = await api.getLogFiles();
+  } catch (err) {
+    logContent = 'Erreur: ' + err;
+  }
+}
+
+function startLogAutoRefresh() {
+  clearLogAutoRefresh();
+  logAutoRefresh = setInterval(async () => {
+    if (currentView === 'logs') {
+      await loadLogs();
+      const el = document.getElementById('log-content');
+      if (el) {
+        el.textContent = logContent;
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }, 3000);
+}
+
+function clearLogAutoRefresh() {
+  if (logAutoRefresh) { clearInterval(logAutoRefresh); logAutoRefresh = null; }
+}
+
+function colorizeLogLine(line) {
+  if (line.includes('ERROR') || line.includes('PANIC')) return '<span class="log-error">' + line + '</span>';
+  if (line.includes('FAILOVER')) return '<span class="log-failover">' + line + '</span>';
+  if (line.includes('CMD')) return '<span class="log-cmd">' + line + '</span>';
+  if (line.includes('===')) return '<span class="log-separator">' + line + '</span>';
+  if (line.includes('Monitor')) return '<span class="log-monitor">' + line + '</span>';
+  return '<span class="log-normal">' + line + '</span>';
+}
+
+function renderLogsView() {
+  const lines = logContent ? logContent.trim().split('\n') : [];
+  const colored = lines.map(colorizeLogLine).join('\n');
+  const fileOptions = logFiles.map(f => {
+    const date = f.replace('.log', '');
+    const sel = selectedLogDate === date ? ' selected' : '';
+    return '<option value="' + date + '"' + sel + '>' + date + '</option>';
+  }).join('');
+  const today = new Date().toISOString().slice(0, 10);
+  const container = document.createElement('div');
+  container.className = 'glass log-card';
+  container.innerHTML = '<div class="log-header">'
+    + '<div class="section-title">📋 Journal d\'événements</div>'
+    + '<div class="log-controls">'
+    + '<select id="log-date-select" class="log-select">'
+    + '<option value=""' + (!selectedLogDate ? ' selected' : '') + '>Aujourd\'hui (' + today + ')</option>'
+    + fileOptions
+    + '</select>'
+    + '<button class="btn btn-sm" id="btn-log-refresh">🔄</button>'
+    + '<button class="btn btn-sm" id="btn-log-auto">' + (logAutoRefresh ? '⏸ Pause' : '▶ Auto') + '</button>'
+    + '</div></div>'
+    + '<div class="log-legend">'
+    + '<span class="log-separator">═══ Séparateur</span>'
+    + '<span class="log-cmd">CMD Commande</span>'
+    + '<span class="log-monitor">Monitor Événement</span>'
+    + '<span class="log-failover">FAILOVER Bascule</span>'
+    + '<span class="log-error">ERROR/PANIC Erreur</span>'
+    + '</div>'
+    + '<pre id="log-content" class="log-content">' + colored + '</pre>';
+  return container;
+}
+
 function renderSettingsView() {
   const s = settingsData || { interval_secs: 5, ping_target: '8.8.8.8', adapter_refresh_secs: 30 };
   const container = document.createElement('div');
@@ -330,9 +417,14 @@ function bindEvents() {
 
   // Nav buttons
   const navMain = document.getElementById('nav-main');
-  if (navMain) navMain.addEventListener('click', () => { currentView = 'main'; render(); });
+  if (navMain) navMain.addEventListener('click', () => { currentView = 'main'; clearLogAutoRefresh(); render(); });
   const navSettings = document.getElementById('nav-settings');
-  if (navSettings) navSettings.addEventListener('click', () => { currentView = 'settings'; render(); });
+  if (navSettings) navSettings.addEventListener('click', () => { currentView = 'settings'; clearLogAutoRefresh(); render(); });
+  const navLogs = document.getElementById('nav-logs');
+  if (navLogs) navLogs.addEventListener('click', async () => { currentView = 'logs'; render(); await loadLogs(); startLogAutoRefresh(); });
+  const navExpert = document.getElementById('nav-expert');
+  if (navExpert) navExpert.addEventListener('click', async () => { currentView = 'expert'; clearLogAutoRefresh(); await loadExpertDetails(); render(); });
+
 
   // Settings save
   const btnSave = document.getElementById('btn-settings-save');
@@ -358,6 +450,26 @@ function bindEvents() {
     } catch (err) {
       showToast('❌ Erreur: ' + err, 'error');
     }
+  });
+
+  // Log controls
+  const logDateSelect = document.getElementById('log-date-select');
+  if (logDateSelect) logDateSelect.addEventListener('change', async (e) => {
+    selectedLogDate = e.target.value;
+    await loadLogs();
+    render();
+    startLogAutoRefresh();
+  });
+  const btnLogRefresh = document.getElementById('btn-log-refresh');
+  if (btnLogRefresh) btnLogRefresh.addEventListener('click', async () => {
+    await loadLogs();
+    const el = document.getElementById('log-content');
+    if (el) { el.innerHTML = logContent.trim().split('\n').map(colorizeLogLine).join('\n'); el.scrollTop = el.scrollHeight; }
+  });
+  const btnLogAuto = document.getElementById('btn-log-auto');
+  if (btnLogAuto) btnLogAuto.addEventListener('click', () => {
+    if (logAutoRefresh) { clearLogAutoRefresh(); } else { startLogAutoRefresh(); }
+    render();
   });
 
   document.querySelectorAll('.toggle input').forEach(input => {
@@ -427,6 +539,14 @@ function bindEvents() {
       showToast('❌ Erreur: ' + err, 'error');
     }
   });
+
+  // Expert refresh
+  const btnExpertRefresh = document.getElementById('btn-expert-refresh');
+  if (btnExpertRefresh) btnExpertRefresh.addEventListener('click', async () => {
+    await loadExpertDetails();
+    render();
+    showToast('🔄 Détails actualisés', 'info');
+  });
 }
 
 export async function loadSettings() {
@@ -444,6 +564,56 @@ export async function refreshAdapters() {
   } catch (err) {
     showToast('❌ Impossible de lister les cartes: ' + err, 'error');
   }
+}
+
+// ─── Expert Mode ───────────────────────────────────────────
+
+async function loadExpertDetails() {
+  try {
+    expertDetails = await api.getAllAdapterDetails();
+  } catch (err) {
+    expertDetails = [];
+    showToast('\u274c Erreur: ' + err, 'error');
+  }
+}
+
+function renderExpertView() {
+  const container = document.createElement('div');
+  container.className = 'glass expert-card';
+  if (!expertDetails || expertDetails.length === 0) {
+    container.innerHTML = '<div class="section-title">\ud83d\udd2c Mode Expert</div>'
+      + '<div class="empty-state"><div class="empty-state-icon">\ud83d\udd0d</div>Chargement des donn\u00e9es r\u00e9seau...</div>';
+    return container;
+  }
+  const cards = expertDetails.map(d => {
+    const isUp = d.status === 'Up';
+    const icon = getAdapterIcon(d.description);
+    return '<div class="expert-adapter">'
+      + '<div class="expert-adapter-header">'
+      + '<span class="expert-icon">' + icon + '</span>'
+      + '<span class="expert-name">' + d.name + '</span>'
+      + '<span class="expert-status ' + (isUp ? 'up' : 'down') + '">' + (isUp ? '\u25cf Actif' : '\u25cb Inactif') + '</span>'
+      + '</div>'
+      + '<div class="expert-grid">'
+      + '<div class="expert-field"><span class="expert-label">Description</span><span class="expert-value">' + d.description + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">Index</span><span class="expert-value">' + d.interface_index + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">MAC</span><span class="expert-value">' + d.mac_address + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">Vitesse</span><span class="expert-value">' + d.speed + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">IP</span><span class="expert-value expert-ip">' + d.ip_address + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">Masque</span><span class="expert-value">' + d.subnet_mask + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">Passerelle</span><span class="expert-value expert-gw">' + d.default_gateway + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">DNS</span><span class="expert-value">' + d.dns_servers + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">DHCP</span><span class="expert-value">' + (d.dhcp_enabled ? '\u2705 Oui' : '\u274c Non') + '</span></div>'
+      + '<div class="expert-field"><span class="expert-label">M\u00e9trique</span><span class="expert-value">' + (d.routing_metric != null ? d.routing_metric : 'N/A') + '</span></div>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+  container.innerHTML = '<div class="section-title">\ud83d\udd2c Mode Expert \u2014 D\u00e9tails r\u00e9seau</div>'
+    + '<div class="expert-adapter-list">' + cards + '</div>'
+    + '<div class="expert-actions">'
+    + '<button class="btn" id="btn-expert-refresh"><span>\ud83d\udd04</span> Actualiser</button>'
+    + '</div>';
+  return container;
 }
 
 export function updateMonitorState(state) {

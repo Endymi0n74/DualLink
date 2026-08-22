@@ -55,3 +55,23 @@ export async function getSettings() {
 export async function saveSettings(intervalSecs, pingTarget, adapterRefreshSecs) {
   return invoke('save_settings', { intervalSecs, pingTarget, adapterRefreshSecs });
 }
+
+export async function getLogs() {
+  return invoke('get_logs');
+}
+
+export async function getLogFiles() {
+  return invoke('get_log_files');
+}
+
+export async function getLogByDate(date) {
+  return invoke('get_log_by_date', { date });
+}
+
+export async function getAdapterDetails(name) {
+  return invoke('get_adapter_details', { name });
+}
+
+export async function getAllAdapterDetails() {
+  return invoke('get_all_adapter_details');
+}

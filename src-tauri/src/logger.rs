@@ -97,3 +97,36 @@ fn format_timestamp(secs: u64) -> String {
     let day = 1 + (day_of_year % 30);
     format!("{:04}-{:02}-{:02}", year, month.min(12), day.min(28))
 }
+
+/// Read today's log file content
+pub fn read_today_log() -> String {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let date = format_timestamp(now);
+    let path = log_dir().join(format!("{}.log", &date));
+    fs::read_to_string(&path).unwrap_or_default()
+}
+
+/// List all available log files
+pub fn list_log_files() -> Vec<String> {
+    let dir = log_dir();
+    let mut files: Vec<String> = fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map(|ext| ext == "log").unwrap_or(false))
+                .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+/// Read a specific log file by date string (e.g. "2026-08-22")
+pub fn read_log_file(date: &str) -> String {
+    let path = log_dir().join(format!("{}.log", date));
+    fs::read_to_string(&path).unwrap_or_default()
+}
