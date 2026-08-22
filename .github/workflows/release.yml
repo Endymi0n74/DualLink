@@ -70,6 +70,15 @@ jobs:
           tauriScript: npx tauri
           releaseId: ${{ github.event_name == 'workflow_dispatch' && '' || '' }}
 
+
+      - name: Create Windows portable ZIP
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          cd src-tauri/target/release
+          7z a -tzip "../../../DualLink_1.0.0_x64-portable.zip" duallink.exe
+
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -80,6 +89,8 @@ jobs:
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
+            DualLink_*-portable.zip
+            DualLink_*-portable.zip
           if-no-files-found: warn
 
   release:
@@ -103,7 +114,7 @@ jobs:
             ## DualLink ${{ github.ref_name }}
 
             ### Installation
-            - **Windows** : Téléchargez `DualLink_*-x64-setup.exe` (NSIS) ou `*_x64_en-US.msi`
+            - **Windows** : Téléchargez `DualLink_*-x64-setup.exe` (NSIS), `*_x64_en-US.msi`, ou `*-portable.zip` (portable)
             - **macOS** : Téléchargez `DualLink_*.dmg` (Apple Silicon)
             - **Linux** : Téléchargez `DualLink_*.AppImage` (portable) ou `*.deb` (Debian/Ubuntu)
 
@@ -114,6 +125,8 @@ jobs:
             artifacts/**/*.dmg
             artifacts/**/*.deb
             artifacts/**/*.AppImage
+            artifacts/**/*.zip
+            artifacts/**/*.zip
           draft: false
           prerelease: false
         env:
