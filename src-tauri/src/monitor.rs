@@ -66,25 +66,13 @@ pub struct AdapterStatus {
     pub latency_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FailoverConfig {
     pub enabled: bool,
     pub primary_index: u32,
     pub secondary_index: u32,
     pub primary_name: String,
     pub secondary_name: String,
-}
-
-impl Default for FailoverConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            primary_index: 0,
-            secondary_index: 0,
-            primary_name: String::new(),
-            secondary_name: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +136,7 @@ pub fn start_monitor(
                 let s = settings.read().await;
                 (s.interval_secs.max(1), s.ping_target.clone(), s.adapter_refresh_secs.max(5))
             };
-            let refresh_interval = if interval_secs > 0 { adapter_refresh_secs / interval_secs } else { 6 };
+            let refresh_interval = adapter_refresh_secs.checked_div(interval_secs).unwrap_or(6);
             let refresh_interval = refresh_interval.max(1);
 
             let connectivity = network::test_connectivity_to(&ping_target).unwrap_or_else(|e| {

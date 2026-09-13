@@ -21,7 +21,7 @@ pub fn init() {
         .unwrap_or_default()
         .as_secs();
     let date = format_timestamp(now);
-    let path = dir.join(format!("{}.log", &date));
+    let path = dir.join(format!("{}.log", date));
 
     let mut file = OpenOptions::new()
         .create(true)
@@ -105,7 +105,7 @@ pub fn read_today_log() -> String {
         .unwrap_or_default()
         .as_secs();
     let date = format_timestamp(now);
-    let path = log_dir().join(format!("{}.log", &date));
+    let path = log_dir().join(format!("{}.log", date));
     fs::read_to_string(&path).unwrap_or_default()
 }
 

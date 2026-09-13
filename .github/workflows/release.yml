@@ -62,6 +62,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      # Garde-fou : `cargo clippy -D warnings` doit passer avant toute
+      # publication. Le crate ne compile que si `frontendDist` (../dist)
+      # existe ; un placeholder suffit ici, le vrai front est construit
+      # juste après par `beforeBuildCommand`.
+      - name: Clippy (zéro avertissement)
+        shell: bash
+        run: |
+          mkdir -p dist
+          [ -f dist/index.html ] || printf '<!doctype html><title>placeholder</title>' > dist/index.html
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:

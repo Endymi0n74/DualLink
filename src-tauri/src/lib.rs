@@ -212,9 +212,9 @@ async fn save_settings(
         interval_secs, ping_target, adapter_refresh_secs
     ));
     let new_settings = Settings {
-        interval_secs: interval_secs.max(1).min(300),
+        interval_secs: interval_secs.clamp(1, 300),
         ping_target,
-        adapter_refresh_secs: adapter_refresh_secs.max(5).min(600),
+        adapter_refresh_secs: adapter_refresh_secs.clamp(5, 600),
     };
     new_settings.save()?;
     let mut s = state.settings.write().await;
@@ -352,7 +352,7 @@ fn is_process_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if h != std::ptr::null_mut() {
+        if !h.is_null() {
             CloseHandle(h);
             return true;
         }
