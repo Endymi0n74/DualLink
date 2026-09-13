@@ -110,7 +110,7 @@ npx tauri build
 
 ### Télécharger l'installeur
 
-Téléchargez `DualLink_1.0.0_x64-setup.exe` depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases).
+Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases).
 
 ### Lancer
 
@@ -119,16 +119,6 @@ Téléchargez `DualLink_1.0.0_x64-setup.exe` depuis les [Releases GitHub](https:
 ```
 
 > ⚠️ L'application demande les **droits admin** au lancement (UAC) pour gérer les cartes réseau.
-
----
-
-## 📦 Installateurs
-
-| Format | Taille | Lien |
-|--------|--------|------|
-| NSIS (.exe) | ~2.6 MB | `DualLink_1.0.0_x64-setup.exe` |
-| MSI (.msi) | ~3.8 MB | `DualLink_1.0.0_x64_en-US.msi` |
-| Portable (.exe) | ~11.8 MB | `duallink.exe` |
 
 ---
 
@@ -164,21 +154,6 @@ Les logs sont écrits dans : `%LOCALAPPDATA%/DualLink/logs/YYYY-MM-DD.log`
 Format : `[HH:MM:SS] MESSAGE`
 
 Types : ERROR (rouge), FAILOVER (orange), CMD (bleu), Monitor (vert)
-
----
-
-## 🐛 Corrections (v1.0.0)
-
-1. tokio::spawn panic → tauri::async_runtime::spawn
-2. Tray icon crash → PNG au lieu de ICO
-3. Double tray → supprimé
-4. Fenêtres PowerShell → CREATE_NO_WINDOW
-5. Admin elevation → app.manifest requireAdministrator
-6. Trop de process → per-adapter ping supprimé
-7. Ping FR → parser temps=/durée= ajouté
-8. Expert lent → batch PS unique
-9. Lock monitor → write lock libéré avant I/O réseau
-10. Double lancement → file lock PID-based
 
 ---
 
