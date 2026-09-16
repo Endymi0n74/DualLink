@@ -60,54 +60,6 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 - Bouton actualiser
 
 ---
-
-## 🏗️ Architecture
-
-```
-Frontend (Vanilla JS)          Backend (Rust / Tauri 2)
-┌─────────────────────┐       ┌──────────────────────────┐
-│  index.html         │       │  lib.rs                  │
-│  src/styles.css     │◄─────►│  19 Tauri commands       │
-│  src/api.js         │       │  monitor.rs (background) │
-│  src/ui.js          │       │  network.rs (ping/PS)    │
-│  src/app.js         │       │  logger.rs (file logs)   │
-└─────────────────────┘       └──────────────────────────┘
-                                      │
-                              ┌───────▼───────┐
-                              │  PowerShell   │
-                              │  (hidden)     │
-                              │  ping.exe     │
-                              └───────────────┘
-```
-
-- **Frontend** : Vanilla JS (aucun framework), CSS glassmorphism dark theme
-- **Backend** : Rust avec Tauri 2, async runtime Tokio
-- **Monitoring** : ~1 process système par tick de 5s (optimisé)
-- **Single instance** : File lock PID-based, pas de double lancement
-- **Persistance** : settings.json + logs journaliers dans `%LOCALAPPDATA%/DualLink/`
-
----
-
-## 🔧 Prérequis
-
-- **Windows** 10/11 (64-bit)
-- **Node.js** 18+
-- **Rust** 1.77+ (via [rustup](https://rustup.rs/))
-- **Tauri CLI** : `cargo install tauri-cli`
-
----
-
-## 🚀 Installation
-
-### Depuis les sources
-
-```bash
-git clone https://github.com/Endymi0n74/DualLink.git
-cd DualLink
-npm install
-npx tauri build
-```
-
 ### Télécharger l'installeur
 
 Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases).
@@ -119,17 +71,6 @@ Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLin
 ```
 
 > ⚠️ L'application demande les **droits admin** au lancement (UAC) pour gérer les cartes réseau.
-
----
-
-## 📊 Process Budget
-
-| Source | Avant | Après |
-|--------|-------|-------|
-| Ping global (8.8.8.8) | 1/5s | 1/5s |
-| PowerShell list_adapters | 1/5s | 1/30s |
-| Ping par adapter | N/5s | **0** (supprimé) |
-| **Total (10 adapters)** | **~9 process/5s** | **~1 process/5s** |
 
 ---
 
