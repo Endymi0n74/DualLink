@@ -4,6 +4,8 @@
 
 ![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen)
 
+**🇫🇷 Français** · [🇬🇧 English](README.en.md)
+
 ---
 
 ## 🎯 Pourquoi DualLink ?
