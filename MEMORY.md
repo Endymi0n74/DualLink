@@ -64,9 +64,9 @@ dualink/
 │   ├── ui.js                 # DOM rendering, toggles, mode selector, toasts, dashboard, failover banner
 │   └── app.js                # Entry point + monitoring-update listener
 └── src-tauri/
-    ├── Cargo.toml            # Rust deps: tauri 2, tokio, serde, anyhow, embed-resource
+    ├── Cargo.toml            # Rust deps: tauri 2, chrono, tauri-plugin-single-instance, tokio, serde, anyhow
     ├── build.rs              # Embeds UAC manifest via embed-resource
-    ├── tauri.conf.json       # App config, window 960x720, dark theme
+    ├── tauri.conf.json       # App config, window 960x720, dark theme, version 1.1.0
     ├── app.manifest          # UAC manifest (requireAdministrator)
     ├── app.rc                # Resource file referencing app.manifest
     ├── capabilities/default.json  # Tauri permissions
@@ -77,8 +77,8 @@ dualink/
         ├── main.rs           # Entry point (windows_subsystem = "windows")
         ├── lib.rs            # 19 Tauri commands + setup (tray, window, monitor)
         ├── logger.rs         # File logger to %LOCALAPPDATA%/DualLink/logs/ + panic hook
-        ├── network.rs        # Native ping + PowerShell with CREATE_NO_WINDOW
-        └── monitor.rs        # Background task: ping every 5s, emit events
+        ├── network.rs        # Native ping + PowerShell with CREATE_NO_WINDOW + pinned host routes
+        └── monitor.rs        # Background task: ping every 5s, emit events, pure decide()
 ```
 
 ## 🔧 Environment
@@ -116,8 +116,22 @@ cd dualink && npm run tauri:build
 6. **Too many processes in monitoring** — 7-9 processes/5s. Fixed by removing per-adapter pings + caching. Result: ~1 process/5s.
 7. **Ping latency always None on FR Windows** — `ping.exe` outputs `temps=`/`durée=` instead of `time=`. Fixed in `network.rs` parser.
 8. **Expert mode slow + PS windows** — 5N+1 separate PS processes. Fixed by batching into single PS script.
-10. **Icon not RGBA for Linux/macOS** — icon.png was RGB. Fixed by converting to RGBA.
-11. **Monitor write lock blocking** — Failover held write lock during `set_routing_metric()`. Fixed: actions under lock, execute outside lock.
+9. **Icon not RGBA for Linux/macOS** — icon.png was RGB. Fixed by converting to RGBA.
+10. **Monitor write lock blocking** — Failover held write lock during `set_routing_metric()`. Fixed: actions under lock, execute outside lock.
+11. **Failover en oscillation (flapping)** — Le ping de test passait par la route par défaut, donc par le secondaire (métrique passée à 10). Le secondaire répondait 3 fois, le primaire était restauré alors qu'il était toujours coupé, puis le failover se re-déclenchait. Fixed: route hôte `/32` épinglée sur le primaire (`RouteMetric 1`) avant chaque test — `ping -S` seul ne suffit pas. Fonction pure `decide()` + compteurs asymétriques (2 échecs / 3 succès) pour interdire l'oscillation. **NE PAS REVERTIR.**
+12. **Métriques d'interface ignorées par Windows** — `Set-NetIPInterface -InterfaceMetric` sans `-AutomaticMetric Disabled`: Windows continuait d'appliquer la métrique automatique, donc le swap de métriques n'était qu'un no-op silencieux. Fixed: `-AutomaticMetric Disabled` systématique.
+13. **Machine transformée en routeur** — `configure_load_balancing` activait `Set-NetIPInterface -Forwarding Enabled` sur TOUTES les interfaces. Fixed: supprimé (ce n'était pas l'effet recherché).
+14. **Failover activable sans route.testable** — Si le primaire n'avait pas d'IP ni de passerelle, le failover s'activait quand même et testait la route par défaut. Fixed: `enable_auto_failover` refuse avec une erreur explicite.
+15. **Nom de fichier de log faux + mauvaise date** — `format_timestamp` comptait 365 jours/an et 30 jours/mois, et UTC au lieu de l'heure locale. Fixed: `chrono::Local`, chemin recalculé à chaque écriture (bascule après minuit).
+16. **Traversée de chemin via `get_log_by_date`** — `read_log_file("../../x")` lisait un fichier arbitraire. Fixed: `NaiveDate::parse_from_str` AVANT construction du chemin.
+17. **Instance unique cassée au premier lancement** — Le lock file était écrit avant la création du dossier (`%LOCALAPPDATA%/DualLink/` inexistant) : échec silencieux. Et `is_process_alive` pouvait valider un PID réutilisé. Fixed: plugin officiel `tauri-plugin-single-instance`, lock file supprimé.
+18. **Runtime async bloqué** — PowerShell et `ping.exe` étaient appelés directement dans des commandes `async` et dans la boucle du monitor. Fixed: `spawn_blocking` + gestion du `JoinError`.
+19. **Statut par adaptateur trompeur** — Tous les adaptateurs affichaient le résultat d'un ping global. Fixed: ping par adaptateur via route épinglée, au rythme du refresh adapters.
+20. **Masque de sous-réseau mal formaté** — `prefix_to_subnet(24)` renvoyait `255.255.255.0/24` pour un champ nommé `subnet_mask`. Fixed: `prefix_to_mask` renvoie le masque pointé seul.
+21. **Ping réussi sans latence lisible** — Le test reposait sur `ttl=`/`durée=` et comparait en minuscules : `durée EXPIRÉ` ne pouvait jamais matcher. Fixed: succès = code de sortie 0 **ET** latence parsée, avec parsing FR/EN/cp850 testé.
+22. **`enable_adapter` par nom** — Les noms d'adaptateurs sont localisés. Fixed: résolution nom → `-InterfaceIndex` (l'échappement reste nécessaire pour la résolution).
+23. **Clamp de `Settings` non appliqué au chargement** — Un `settings.json` hors bornes n'était borné qu'à l'écriture. Fixed: `Settings::validated()` au chargement ET à la sauvegarde.
+24. **ZIP portable mal nommé (CI)** — Le workflow codait en dur `DualLink_1.0.0_x64-portable.zip`. Depuis v1.0.1, chaque release publiait un ZIP portant le numéro de la version précédente. Fixed: nom dérivé du tag.
 
 ## 🧩 Architecture Decisions
 - **No framework**: vanilla JS (no React/Vue) — lightweight, fast
@@ -126,8 +140,9 @@ cd dualink && npm run tauri:build
 - **Native ping**: monitoring uses `ping.exe` via `run_hidden_command()` with `CREATE_NO_WINDOW` flag — zero visible windows
 - **PowerShell (hidden)**: adapter management (list/enable/disable/metrics) uses `run_powershell()` which wraps `run_hidden_command()` with `CREATE_NO_WINDOW` flag
 - **No visible process spawn**: ALL `Command::new()` calls go through `run_hidden_command()` which applies `creation_flags(CREATE_NO_WINDOW)` on Windows. Expert mode uses single batch PS script (no multiple process spawns).
-- **Background monitoring**: `tauri::async_runtime::spawn` (NOT `tokio::spawn`) with configurable interval (default 5s, re-read each tick via RwLock). Adapter list cached (default 30s). No per-adapter ping. Uses `sleep` instead of `interval` for dynamic reconfiguration. Write lock released before network I/O (failover metrics swap) to avoid blocking the monitor loop and Tauri commands.
-- **System tray**: X hides window to tray, "Quitter" exits + cleans lock file. Context menu: Afficher/Quitter
+- **Background monitoring**: `tauri::async_runtime::spawn` (NOT `tokio::spawn`) with configurable interval (default 5s, re-read each tick via RwLock). Adapter list cached (default 30s). Write lock released before network I/O (failover metrics swap) to avoid blocking the monitor loop and Tauri commands. All blocking calls (PowerShell, ping.exe) run in `tokio::task::spawn_blocking` with `JoinError` handling; a panicking worker thread is logged and the tick abandoned rather than propagated.
+- **Ping parsing**: `parse_latency()` strips non-ASCII before matching keywords (`time`, `temps`, `dure`), because `ping.exe` emits the console code page (cp437/cp850 on FR Windows) and UTF-8 decoding turns accents into replacement chars. Success requires exit code 0 AND a parsed latency.
+- **System tray**: X hides window to tray, "Quitter" exits. Context menu: Afficher/Quitter
 - **19 Tauri commands**: list_adapters, enable_adapter, disable_adapter, test_connectivity, test_adapter_connectivity, set_routing_metric, configure_load_balancing, configure_failover, get_monitor_state, enable_auto_failover, disable_auto_failover, get_failover_state, get_settings, save_settings, get_logs, get_log_files, get_log_by_date, get_adapter_details, get_all_adapter_details
 
 ## 🔬 Expert Mode Architecture
@@ -144,18 +159,32 @@ cd dualink && npm run tauri:build
 - **Expert mode**: ✅ Single PS batch call, no PowerShell windows visible
 - **UAC**: ✅ Exe requests admin on launch (requireAdministrator manifest embedded)
 - **No PowerShell windows**: ✅ All process spawns use CREATE_NO_WINDOW + native ping.exe
-- **Monitoring optimized**: ✅ ~1 process per tick (was 7-9). Adapter list cached. No per-adapter pings.
-- **Auto failover**: ✅ Debounced (2 failures = 10s failover, 3 successes = 15s recovery). Banner UI.
-- **Settings configurable**: ✅ Ping interval, target IP, adapter refresh — persisted in settings.json, UI tab.
+- **Monitoring optimized**: ✅ ~1 process per tick (was 7-9). Adapter list cached. Per-adapter status probed at adapter-refresh cadence.
+- **Auto failover**: ✅ Debounced (2 failures = 10s failover, 3 successes = 15s recovery). Banner UI. **Primary tested via pinned host route — flapping fixed.**
+- **Settings configurable**: ✅ Ping interval, target IP, adapter refresh — persisted in settings.json, UI tab, clamped on load and save
 - **Frontend**: ✅ Vite build OK, dist/ has CSS + JS assets
 - **Code stats**: ~2200 lines total (1150 Rust + 700 JS + 180 CSS)
-- **Single instance**: ✅ File lock with PID check prevents double launch
+- **Single instance**: ✅ Plugin `tauri-plugin-single-instance`, focuses main window on 2nd launch
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
-- **Ready for testing**: ✅ No publish, no release — exe in target/release/
+- **Quality gates**: ✅ `cargo check` / `clippy -D warnings` / `fmt --check` / 22 unit tests — all clean, CI gates on clippy
+- **Version**: 1.1.0 (tagged v1.0.1 is the last published release)
 - **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.0.1 released
 - **Releases**: NSIS (Windows), MSI (Windows), ZIP portable (Windows), DMG (macOS), AppImage (Linux), deb (Linux)
-- **CI/CD**: ✅ GitHub Actions multi-platform (Windows/macOS/Linux), triggered by v* tags
+- **CI/CD**: ✅ GitHub Actions (Windows/macOS/Linux), triggered by v* tags, gated on clippy -D warnings
 - **README**: ✅ Documentation complète (features, architecture, build, backlog)
+
+## 📊 Current Status (2026-10-11)
+- **Build**: ✅ `cargo check`, `clippy -D warnings`, `fmt --check` et 22 tests unitaires propres
+- **Version**: 1.1.0 (dernier tag publié : v1.0.1)
+- **Failover**: ✅ Oscillation supprimée — le primaire est testé via une route hôte `/32` épinglée, pas via la route par défaut
+- **Métriques**: ✅ `-AutomaticMetric Disabled` appliqué (sinon Windows ignorait `-InterfaceMetric`)
+- **Forwarding**: ✅ Supprimé (la machine ne se comporte plus en routeur)
+- **Logs**: ✅ `chrono::Local`, nouveau fichier après minuit, dates validées (pas de traversée de chemin)
+- **Single instance**: ✅ Plugin officiel, lock file supprimé
+- **Runtime**: ✅ Aucun appel PowerShell/ping sur le runtime async (`spawn_blocking`)
+- **Statut par adaptateur**: ✅ Mesuré par adaptateur via route épinglée, rafraîchi au rythme du refresh adapters
+- **Dépendances**: `+chrono`, `+tauri-plugin-single-instance`, `-tauri-plugin-shell`, `-windows-sys`
+- **Non testé sur cette machine**: bascule de failover réelle, `New-NetRoute` (shell non élevé; l'app l'est via `app.manifest`)
 
 ## ⏳ Backlog (après tests)
 1. ~~Bundle NSIS~~ ✅ Activé `"active": true` dans `tauri.conf.json` pour installeur distribuable
@@ -168,17 +197,23 @@ cd dualink && npm run tauri:build
 8. **Historique métriques** — SQLite pour analyse long terme
 9. **Multi-langue** (FR/EN)
 10. **Crash reporting** — envoyer logs panic vers endpoint
+11. **Passerelle primaire figée** — `FailoverConfig.primary_gateway` est résolue à l'activation. Un changement de passerelle (reconnexion PPPoE, DHCP) invalide la route jusqu'à réactivation du failover
+12. **Renommer `configure_load_balancing`** — nom trompeur (répartition de priorité, pas de load balancing). Conservée pour ne pas casser le frontend
+13. **CI multiplateforme inutile** — le workflow construit macOS/Linux alors que l'app dépend de PowerShell, `ping.exe`, `New-NetRoute` et d'un manifeste UAC Windows
 
 ## ⚠️ Known Issues / TODO
 - **Bundle**: ✅ NSIS + MSI + ZIP portable + DMG + AppImage + deb — all generated via `tauri build`. Language: FR (1036).
-- **File logging**: ✅ `logger.rs` writes to `%LOCALAPPDATA%/DualLink/logs/YYYY-MM-DD.log`. Logs startup, all Tauri commands, monitor errors, and panics via custom hook. One file per day, append mode.
+- **File logging**: ✅ `logger.rs` writes to `%LOCALAPPDATA%/DualLink/logs/YYYY-MM-DD.log` (heure locale, chemin recalculé à chaque écriture). Logs startup, all Tauri commands, monitor errors, and panics via custom hook. One file per day, append mode.
 - **CSP is null**: Security CSP is disabled. Should add proper CSP for production.
 
 ## 🛡️ Auto-Failover Architecture
 - **State**: `FailoverConfig` + `FailoverState` in `monitor.rs`, shared via `Arc<RwLock<MonitorState>>`
 - **Lock pattern**: Read/write lock released before network I/O (set_routing_metric). Actions determined under lock, executed outside lock, state updated in single write lock.
-- **Debouncing**: 2 consecutive failures (10s) before failover, 3 consecutive successes (15s) before recovery — prevents flapping
-- **Metrics swap**: On failover: secondary=metric 10 (priority), primary=metric 100. On recovery: restored.
+- **Debouncing**: `decide()` is a PURE function: 2 consecutive failures (10s) before failover, 3 consecutive successes (15s) before recovery. Counters reset on every state change and on enable/disable.
+- **Primary probe (fix for flapping)**: the failover decision uses `probe_primary()`, which pins a `/32` host route on the primary (`RouteMetric 1`, next hop = `primary_gateway`) before pinging. A plain ping would follow the default route — i.e. the secondary — and would falsely report the primary as recovered. `ping -S` alone is NOT sufficient.
+- **Gateways**: `enable_auto_failover` resolves `primary_ip` + `primary_gateway` via `Get-NetIPConfiguration` and REFUSES activation (explicit `Err`) if either is missing — a failover without a pinnable route would test the wrong interface.
+- **State update**: `is_failed_over` changes ONLY if every `set_routing_metric` succeeded. On failure: `ERROR` logged, counters re-armed to the threshold so the switch retries next tick.
+- **Metrics swap**: On failover: secondary=metric 10 (priority), primary=metric 100. On recovery: restored. `-AutomaticMetric Disabled` is mandatory, else Windows ignores `-InterfaceMetric`.
 - **Tauri commands**: `enable_auto_failover(primary_index, secondary_index, primary_name, secondary_name)`, `disable_auto_failover()`, `get_failover_state()`
 - **MonitorState.failover** field carries the state to frontend via `monitoring-update` event
 - **UI**: `.failover-banner` shows standby/active status with switch count and disable button
@@ -198,7 +233,8 @@ cd dualink && npm run tauri:build
 |--------|--------|-------|
 | Global ping (8.8.8.8) | 1/5s | 1/5s |
 | PowerShell list_adapters | 1/5s | 1/30s |
-| Per-adapter ping (8.8.8.8) | N/5s (N=connected) | 0 (removed) |
+| Primary probe (failover active) | 0 | 2/5s (pin + unpin) |
+| Per-adapter ping (8.8.8.8) | N/5s (N=connected) | 3N/30s (at refresh cadence) |
 | **Total (10 adapters)** | **~9 processes/5s** | **~1 process/5s** |
 
 ## ⚙️ Settings Architecture

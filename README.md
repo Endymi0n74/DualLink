@@ -2,7 +2,7 @@
 
 **Gestionnaire de cartes réseau Windows** — Partagez et mutualisez vos connexions internet (téléphone + Box par exemple) avec un failover automatique intelligent.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.1.0-brightgreen)
 
 **🇫🇷 Français** · [🇬🇧 English](README.en.md)
 
@@ -13,7 +13,7 @@
 Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ? DualLink vous permet de :
 
 - **Activer/désactiver** chaque carte réseau individuellement
-- **Load Balancing** — répartir le trafic entre vos connexions
+- **Load Balancing** — répartition de priorité entre vos connexions (une destination ne suit qu’une seule interface, la plus basse métrique)
 - **Failover automatique** — si une connexion tombe, bascule sur l'autre sans intervention
 - **Monitorer** la latence en temps réel avec un graphique canvas
 - **Mode Expert** — voir IP, passerelle, DNS, DHCP, métrique par adapter
@@ -34,7 +34,8 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 | 🔲 **System tray** | Minimise dans la barre des tâches au lieu de fermer |
 | 🔒 **Admin auto** | Demande les droits admin au lancement (UAC) |
 | 🚫 **Zero fenêtres** | Aucune fenêtre PowerShell visible — tout est en arrière-plan |
-| 🔒 **Single instance** | Un seul exemplaire autorisé — pas de doublons tray |
+| 🔒 **Single instance** | Plugin officiel Tauri — un seul exemplaire, fenêtre réaffichée au 2e lancement |
+| 🔗 **Icônes sur mesure** | Deux anneaux entrelacés (les « liens » de DualLink), version affichée dans l’en-tête |
 
 ---
 
@@ -84,7 +85,8 @@ Internet UP   → 3 succès consécutifs (15s) → Restaure primary
 ```
 
 - **Debouncing** anti-flapping
-- Métriques swap automatique (metric 10 → 100)
+- **Test du primaire, pas du secondaire** : une route hôte `/32` est épinglée sur le primaire (métrique 1) avant chaque test, sans quoi le ping repartirait par le secondaire et provoquerait une oscillation
+- Métriques swap automatique (metric 10 → 100), avec `-AutomaticMetric Disabled` (sans lui Windows ignore `-InterfaceMetric`)
 - Banner UI avec statut standby/actif + bouton désactiver
 - Lock libéré avant appels réseau — pas de blocage du monitor
 
@@ -94,7 +96,7 @@ Internet UP   → 3 succès consécutifs (15s) → Restaure primary
 
 Les logs sont écrits dans : `%LOCALAPPDATA%/DualLink/logs/YYYY-MM-DD.log`
 
-Format : `[HH:MM:SS] MESSAGE`
+Format : `[HH:MM:SS] MESSAGE` (heure locale, nouveau fichier après minuit)
 
 Types : ERROR (rouge), FAILOVER (orange), CMD (bleu), Monitor (vert)
 

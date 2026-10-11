@@ -82,12 +82,16 @@ jobs:
           releaseId: ${{ github.event_name == 'workflow_dispatch' && '' || '' }}
 
 
+      # Le nom du ZIP est dérivé du tag (v1.1.0 -> DualLink_1.1.0_x64-portable.zip).
+      # Il était codé en dur sur 1.0.0: depuis la release v1.0.1, chaque version
+      # publiée créait un ZIP portant le numéro de la version précédente.
       - name: Create Windows portable ZIP
         if: matrix.platform == 'windows-latest'
         shell: bash
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           cd src-tauri/target/release
-          7z a -tzip "../../../DualLink_1.0.0_x64-portable.zip" duallink.exe
+          7z a -tzip "../../../DualLink_${VERSION}_x64-portable.zip" duallink.exe
 
 
       - name: Upload artifacts
