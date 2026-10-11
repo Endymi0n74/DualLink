@@ -847,7 +847,6 @@ version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
- "embed-resource",
  "serde",
  "serde_json",
  "tauri",

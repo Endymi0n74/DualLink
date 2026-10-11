@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Inclus TEL QUEL dans le .rc par build.rs (`1 24 "app.manifest"`,
+     append_rc_content de tauri-build): rc.exe embarque les octets du
+     fichier sans transformation. Ne PAS passer par
+     WindowsAttributes::app_manifest: tauri-winres l'insère dans un bloc
+     de chaînes rc (espaces ajoutés, accents perdus) et CreateActCtx
+     refuse le résultat (erreur SxS 14001, bug #29). -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
   <assemblyIdentity
     type="win32"
@@ -6,6 +12,19 @@
     version="1.2.0.0"
     processorArchitecture="*"/>
   <description>DualLink - Network Adapter Manager</description>
+  <!-- Dependance reprise du manifeste par defaut de tauri-build: sans elle,
+       les controles natifs (menus, dialogues) perdraient les styles visuels. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"/>
+    </dependentAssembly>
+  </dependency>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
@@ -25,10 +44,16 @@
       <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
     </application>
   </compatibility>
+  <!-- Chaque parametre dans SON espace de noms enregistre: dpiAware dans
+       2005, dpiAwareness dans 2016. Tout autre couplage (ex. dpiAwareness
+       en 2011) fait rejeter le manifeste par CreateActCtx avec SideBySide
+       event 79 « parametre non inscrit » -> erreur SxS 14001 au demarrage. -->
   <asmv3:application>
+    <asmv3:windowsSettings xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">
+      <dpiAware>true/pm</dpiAware>
+    </asmv3:windowsSettings>
     <asmv3:windowsSettings xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
       <dpiAwareness>PerMonitorV2</dpiAwareness>
-      <dpiAware>true/pm</dpiAware>
     </asmv3:windowsSettings>
   </asmv3:application>
 </assembly>

@@ -390,6 +390,9 @@ async fn save_settings(
 pub fn run() {
     logger::init();
     logger::log_file("DualLink starting...");
+    // Sans jeton élevé, toutes les cmdlets Net* échoueront (bug #29):
+    // trace l'état dès le démarrage pour diagnostiquer en un coup d'œil.
+    logger::log_file(&format!("Elevated: {}", network::is_elevated()));
 
     let monitor_state = Arc::new(RwLock::new(MonitorState::default()));
     let settings = Arc::new(RwLock::new(Settings::load()));

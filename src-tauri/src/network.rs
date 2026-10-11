@@ -70,6 +70,71 @@ fn run_powershell(script: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+// ── Élévation ────────────────────────────────────────────────────
+
+#[cfg(windows)]
+mod winapi_elev {
+    use std::os::raw::c_void;
+
+    pub type Handle = *mut c_void;
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        pub fn OpenProcessToken(process: Handle, access: u32, token: *mut Handle) -> i32;
+        pub fn GetTokenInformation(
+            token: Handle,
+            info_class: i32,
+            info: *mut c_void,
+            length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+        pub fn CloseHandle(object: Handle) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn GetCurrentProcess() -> Handle;
+    }
+}
+
+/// Vrai si le processus courant tourne avec un jeton élevé (droits admin).
+///
+/// Sans élévation, `Disable-NetAdapter` et les autres cmdlets Net* échouent en
+/// « Accès refusé » (Windows System Error 5, bug #29). Le contrôle est fait
+/// avant d'appeler PowerShell pour renvoyer un message actionnable plutôt
+/// qu'une sortie PowerShell tronquée et mojibakée.
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_ELEVATION: i32 = 20;
+
+    // SAFETY: handles natifs bornés et fermés dans tous les cas;
+    // `elevation` est un u32 aligné, taille attendue par TokenElevation.
+    unsafe {
+        let mut token: winapi_elev::Handle = std::ptr::null_mut();
+        let current = winapi_elev::GetCurrentProcess();
+        if winapi_elev::OpenProcessToken(current, TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation: u32 = 0;
+        let mut returned: u32 = 0;
+        let ok = winapi_elev::GetTokenInformation(
+            token,
+            TOKEN_ELEVATION,
+            &mut elevation as *mut u32 as *mut std::os::raw::c_void,
+            std::mem::size_of::<u32>() as u32,
+            &mut returned,
+        );
+        winapi_elev::CloseHandle(token);
+        ok != 0 && elevation != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_elevated() -> bool {
+    true
+}
+
 // ── Tests de connectivité ─────────────────────────────────────────
 
 /// Extrait la latence d'une sortie `ping.exe`, en français ou en anglais.
@@ -422,6 +487,15 @@ pub fn disable_adapter(name: &str) -> Result<()> {
 /// local`…), l'index ne l'est pas. Le nom reste utilisé pour la résolution,
 /// d'où l'échappement PowerShell.
 fn set_adapter_enabled(name: &str, enabled: bool) -> Result<()> {
+    if !is_elevated() {
+        anyhow::bail!(
+            "Droits administrateur manquants: DualLink s'exécute sans élévation, \
+             PowerShell refuserait la commande (Accès refusé). Relancez l'application \
+             en tant qu'administrateur (clic droit sur duallink.exe → \
+             Exécuter en tant qu'administrateur)."
+        );
+    }
+
     let verb = if enabled { "Enable" } else { "Disable" };
     let action = if enabled { "enable" } else { "disable" };
     let script = format!(
