@@ -183,7 +183,7 @@ cd dualink && npm run tauri:build
 
 ## 📊 Current Status (2026-10-11)
 - **Build**: ✅ `cargo check`, `clippy -D warnings`, `fmt --check` et 22 tests unitaires propres
-- **Version**: 1.2.2 (dernier tag publié : v1.2.1)
+- **Version**: 1.2.2 (tag v1.2.2 publié et vérifié le 2026-10-11 — setup.exe 2,3 Mo, msi 3,4 Mo, portable zip 3,0 Mo)
 - **Failover**: ✅ Oscillation supprimée — le primaire est testé via une route hôte `/32` épinglée, pas via la route par défaut
 - **Métriques**: ✅ `-AutomaticMetric Disabled` appliqué (sinon Windows ignorait `-InterfaceMetric`)
 - **Forwarding**: ✅ Supprimé (la machine ne se comporte plus en routeur)
@@ -195,7 +195,7 @@ cd dualink && npm run tauri:build
 - **Runtime**: ✅ Aucun appel PowerShell/ping sur le runtime async (`spawn_blocking`)
 - **Statut par adaptateur**: ✅ Mesuré par adaptateur via route épinglée, rafraîchi au rythme du refresh adapters
 - **Dépendances**: `+chrono`, `+tauri-plugin-single-instance`, `-tauri-plugin-shell`, `-windows-sys`
-- **Testé sur cette machine**: Wi-Fi passe vert (17 ms), `disable_adapter` coupe réellement VMnet1 (vérifié: status `Disabled`), toast « masqué dans le tray » lisible avant fermeture (4s validé à l'usage)
+- **Testé sur cette machine**: Wi-Fi passe vert (17 ms), `disable_adapter` coupe réellement VMnet1 (vérifié: status `Disabled`), toast « masqué dans le tray » lisible avant fermeture (4s validé à l'usage); exe release 1.2.2 reconstruit depuis le tag et relancé: `Elevated: true`, zéro événement SideBySide (non-régression #29)
 - **Limite**: Toute action nécessitant l'élévation échoue si le processus ne l'est pas. Depuis le fix #29, un lancement normal déclenche l'invite UAC; si un contexte lance l'exe sans élévation, l'app le détecte (`network::is_elevated()`, log `Elevated: false`) et renvoie un message clair (« Droits administrateur manquants… ») au lieu d'une sortie PowerShell. Le repli `ping -S` masque encore ce cas pour l'affichage des sondes.
 
 ## ⏳ Backlog (après tests)
