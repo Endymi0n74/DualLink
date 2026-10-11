@@ -85,6 +85,10 @@ body::after{width:350px;height:350px;background:radial-gradient(circle,var(--acc
 .failover-standby{background:rgba(0,255,136,.06);border-color:rgba(0,255,136,.2)}
 .failover-active{background:rgba(255,170,34,.08);border-color:rgba(255,170,34,.3);animation:pulse-border 2s ease infinite}
 .failover-banner-icon{font-size:18px}
+/* Bannière « DualLink tourne sans droits admin »: bloqueur explicite, l'utilisateur voit pourquoi les actions échoueront. */
+.elevation-banner{display:flex;align-items:flex-start;gap:10px;padding:12px 18px;border-radius:var(--radius-sm);font-size:13px;background:rgba(255,70,90,.08);border:1px solid rgba(255,70,90,.35);animation:fade-in .4s ease}
+.elevation-banner-icon{font-size:18px;flex-shrink:0}
+.elevation-banner b{color:var(--accent-red)}
 .failover-banner-text{flex:1;color:var(--text-primary)}
 .failover-banner-count{color:var(--text-muted);font-size:11px;white-space:nowrap}
 .btn-sm{padding:5px 12px;font-size:11px}

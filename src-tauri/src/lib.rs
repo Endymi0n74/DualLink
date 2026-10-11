@@ -325,6 +325,17 @@ fn get_logs() -> Result<String, String> {
     Ok(logger::read_today_log())
 }
 
+/// Élévation du processus courant.
+///
+/// Alimente la bannière d'avertissement du frontend: sans jeton élevé,
+/// toutes les cmdlets Net* et route.exe sont refusées par Windows, et
+/// l'utilisateur doit relancer l'app en administrateur pour que les
+/// actions aient un effet.
+#[tauri::command]
+fn get_elevation_status() -> Result<bool, String> {
+    Ok(network::is_elevated())
+}
+
 /// Version de l'application, lue depuis `Cargo.toml`.
 ///
 /// Le frontend affiche cette valeur: la écrire en dur dans le JS obligerait
@@ -476,6 +487,7 @@ pub fn run() {
             save_settings,
             get_logs,
             get_app_version,
+            get_elevation_status,
             get_log_files,
             get_log_by_date,
             get_adapter_details,

@@ -14,6 +14,9 @@ let logAutoRefresh = null;
 const MAX_HISTORY = 10;
 let latencyHistory = [];
 let appVersion = '';
+// Élévation du processus: statique par session. `true` par défaut pour ne
+// jamais afficher la bannière par erreur si la commande échoue.
+let isElevated = true;
 
 // Marque de l'application: deux anneaux entrelacés (deux liens), le même
 // dessin que src-tauri/icons. Version 1.1.0, même dégradé cyan -> violet.
@@ -33,6 +36,17 @@ export async function loadAppVersion() {
     appVersion = 'v' + await api.getAppVersion();
   } catch (e) {
     appVersion = '';
+  }
+}
+
+// Charge l'état d'élévation, qui pilote la bannière d'avertissement.
+// Sans droits admin, chaque action réseau échoue: l'utilisateur doit le
+// savoir AVANT de cliquer, pas au travers d'une erreur PowerShell.
+export async function loadElevationStatus() {
+  try {
+    isElevated = await api.getElevationStatus();
+  } catch (e) {
+    isElevated = true;
   }
 }
 
@@ -114,6 +128,16 @@ export function render() {
     + '</div>'
     + '<div class="header-status"><span class="status-dot ' + (on ? 'online' : '') + '"></span><span>' + (on ? 'Connecté' : 'Déconnecté') + '</span></div>';
   app.appendChild(header);
+
+  if (!isElevated) {
+    const banner = document.createElement('div');
+    banner.className = 'elevation-banner';
+    banner.innerHTML = '<span class="elevation-banner-icon">🛡️</span>'
+      + '<span><b>DualLink s\'exécute sans droits administrateur.</b> '
+      + 'Les actions réseau (activation des cartes, routes, métriques, failover) seront refusées par Windows. '
+      + 'Relancez l\'application en tant qu\'administrateur : clic droit sur duallink.exe → Exécuter en tant qu\'administrateur.</span>';
+    app.appendChild(banner);
+  }
 
   const mode = document.createElement('div');
   if (currentView === 'logs') {
