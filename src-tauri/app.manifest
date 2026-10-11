@@ -9,7 +9,7 @@
   <assemblyIdentity
     type="win32"
     name="DualLink"
-    version="1.2.1.0"
+    version="1.2.2.0"
     processorArchitecture="*"/>
   <description>DualLink - Network Adapter Manager</description>
   <!-- Dependance reprise du manifeste par defaut de tauri-build: sans elle,
