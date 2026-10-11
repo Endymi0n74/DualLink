@@ -1,43 +1,54 @@
+use chrono::{Local, NaiveDate};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::SystemTime;
 
-static LOG_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// Sérialise les écritures concurrentes dans les fichiers de log.
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Format des noms de fichiers de log: `AAAA-MM-JJ.log`.
+const LOG_FILE_DATE_FORMAT: &str = "%Y-%m-%d";
 
 fn log_dir() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| ".".to_string());
+    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(base).join("DualLink").join("logs")
+}
+
+/// Chemin du log du jour.
+///
+/// Recalculé à chaque appel: après minuit les écritures basculent
+/// automatiquement dans le fichier du nouveau jour.
+fn log_file_path() -> PathBuf {
+    log_dir().join(format!("{}.log", Local::now().format(LOG_FILE_DATE_FORMAT)))
+}
+
+/// Vérifie qu'une date fournie par le frontend est bien un `AAAA-MM-JJ`.
+///
+/// Bloque la traversée de chemin (`../../`) sur `read_log_file`.
+fn is_valid_log_date(date: &str) -> bool {
+    NaiveDate::parse_from_str(date, LOG_FILE_DATE_FORMAT).is_ok()
 }
 
 pub fn init() {
     let dir = log_dir();
-    let _ = fs::create_dir_all(&dir);
+    if let Err(e) = fs::create_dir_all(&dir) {
+        eprintln!("DualLink: création du dossier de logs impossible: {e}");
+    }
 
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let date = format_timestamp(now);
-    let path = dir.join(format!("{}.log", date));
-
-    let mut file = OpenOptions::new()
+    let start = format!(
+        "\n=== DualLink started at {} ===",
+        Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
+    if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
-        .ok();
-
-    if let Some(ref mut f) = file {
-        let _ = writeln!(f, "\n=== DualLink started at {} ===", format_datetime(now));
+        .open(log_file_path())
+    {
+        let _ = writeln!(f, "{start}");
     }
 
-    if let Ok(mut guard) = LOG_FILE.lock() {
-        *guard = Some(path);
-    }
-
-    // Panic hook: log panics to file before aborting
+    // Hook de panique: écrit dans le log avant d'appeler le hook par défaut.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let thread = std::thread::current();
@@ -51,62 +62,35 @@ pub fn init() {
             "Box<dyn Any>".to_string()
         };
 
-        let location = info.location()
+        let location = info
+            .location()
             .map(|l| format!("{}:{}", l.file(), l.line()))
             .unwrap_or_else(|| "unknown".to_string());
 
         log_file(&format!("PANIC [{}] {} at {}", thread_name, msg, location));
 
-        // Call the default hook (prints to stderr if console is visible)
         default_hook(info);
     }));
 }
 
+/// Écrit une ligne horodatée en heure locale dans le log du jour.
 pub fn log_file(msg: &str) {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let line = format!("[{}] {}\n", format_datetime(now), msg);
+    let line = format!("[{}] {}\n", Local::now().format("%H:%M:%S"), msg);
 
-    if let Ok(guard) = LOG_FILE.lock() {
-        if let Some(ref path) = *guard {
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-                let _ = file.write_all(line.as_bytes());
-                let _ = file.flush();
-            }
-        }
+    let _guard = WRITE_LOCK.lock();
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file_path())
+    {
+        let _ = file.write_all(line.as_bytes());
+        let _ = file.flush();
     }
-}
-
-// ── Helpers ──
-
-fn format_datetime(secs: u64) -> String {
-    let secs_in_day = secs % 86400;
-    let h = secs_in_day / 3600;
-    let m = (secs_in_day % 3600) / 60;
-    let s = secs_in_day % 60;
-    format!("{:02}:{:02}:{:02}", h, m, s)
-}
-
-fn format_timestamp(secs: u64) -> String {
-    let days = secs / 86400;
-    let year = 1970 + days / 365;
-    let day_of_year = days % 365;
-    let month = 1 + (day_of_year / 30);
-    let day = 1 + (day_of_year % 30);
-    format!("{:04}-{:02}-{:02}", year, month.min(12), day.min(28))
 }
 
 /// Read today's log file content
 pub fn read_today_log() -> String {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let date = format_timestamp(now);
-    let path = log_dir().join(format!("{}.log", date));
-    fs::read_to_string(&path).unwrap_or_default()
+    fs::read_to_string(log_file_path()).unwrap_or_default()
 }
 
 /// List all available log files
@@ -116,7 +100,12 @@ pub fn list_log_files() -> Vec<String> {
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map(|ext| ext == "log").unwrap_or(false))
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "log")
+                        .unwrap_or(false)
+                })
                 .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
                 .collect()
         })
@@ -126,7 +115,53 @@ pub fn list_log_files() -> Vec<String> {
 }
 
 /// Read a specific log file by date string (e.g. "2026-08-22")
+///
+/// La date est validée avant tout usage: une entrée invalide
+/// (`../../secret`, `2026/08/22`, …) retourne une chaîne vide.
 pub fn read_log_file(date: &str) -> String {
-    let path = log_dir().join(format!("{}.log", date));
+    if !is_valid_log_date(date) {
+        return String::new();
+    }
+    let path = log_dir().join(format!("{date}.log"));
     fs::read_to_string(&path).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_date_valide_accepte_aaaa_mm_jj() {
+        assert!(is_valid_log_date("2026-08-22"));
+        assert!(is_valid_log_date("2024-02-29"));
+    }
+
+    #[test]
+    fn log_date_valide_refuse_traversee_et_format_incorrect() {
+        for date in [
+            "../../x",
+            "..\\..\\x",
+            "2026/08/22",
+            "2026-8-22.log",
+            "",
+            "aujourd'hui",
+            "2026-13-01",
+        ] {
+            assert!(!is_valid_log_date(date), "date acceptée à tort: {date}");
+        }
+    }
+
+    #[test]
+    fn read_log_file_traversee_vide() {
+        assert_eq!(read_log_file("../../x"), "");
+        assert_eq!(
+            read_log_file("..\\..\\Windows\\System32\\drivers\\etc\\hosts"),
+            ""
+        );
+    }
+
+    #[test]
+    fn read_log_file_date_valide_fichier_absent_vide() {
+        assert_eq!(read_log_file("2000-01-01"), "");
+    }
 }

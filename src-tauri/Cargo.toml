@@ -1,6 +1,6 @@
 [package]
 name = "duallink"
-version = "1.0.0"
+version = "1.1.0"
 description = "DualLink"
 edition = "2021"
 
@@ -10,12 +10,14 @@ embed-resource = "3"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-shell = "2"
+# Instance unique: gère le verrou système et réaffiche la fenêtre au 2e lancement.
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
-windows-sys = { version = "0.59", features = ["Win32_System_Threading", "Win32_Foundation"] }
+# Horodatage local + validation des dates de fichiers de log.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [features]
 default = ["custom-protocol"]
