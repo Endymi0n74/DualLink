@@ -60,7 +60,7 @@ dualink/
 ├── dist/                     # Built frontend (served by Tauri)
 ├── src/
 │   ├── styles.css            # Glassmorphism dark theme (~minified)
-│   ├── api.js                # Tauri invoke wrappers (19 commands)
+│   ├── api.js                # Tauri invoke wrappers (20 commands)
 │   ├── ui.js                 # DOM rendering, toggles, mode selector, toasts, dashboard, failover banner
 │   └── app.js                # Entry point + monitoring-update listener
 └── src-tauri/
@@ -71,11 +71,12 @@ dualink/
     ├── app.rc                # Resource file referencing app.manifest
     ├── capabilities/default.json  # Tauri permissions
     ├── icons/
-    │   ├── icon.ico          # Windows app icon (32x32)
-    │   └── icon.png          # Tray icon (32x32 blue globe, handcrafted)
+    │   ├── icon.ico          # Icône Windows multi-tailles (16 -> 256)
+    │   ├── icon.png          # Icône applicative 512x512 RGBA (installateur)
+    │   └── tray-icon.png     # Icône barre des tâches 32x32 RGBA
     └── src/
         ├── main.rs           # Entry point (windows_subsystem = "windows")
-        ├── lib.rs            # 19 Tauri commands + setup (tray, window, monitor)
+        ├── lib.rs            # 20 Tauri commands + setup (tray, window, monitor)
         ├── logger.rs         # File logger to %LOCALAPPDATA%/DualLink/logs/ + panic hook
         ├── network.rs        # Native ping + PowerShell with CREATE_NO_WINDOW + pinned host routes
         └── monitor.rs        # Background task: ping every 5s, emit events, pure decide()
@@ -143,7 +144,7 @@ cd dualink && npm run tauri:build
 - **Background monitoring**: `tauri::async_runtime::spawn` (NOT `tokio::spawn`) with configurable interval (default 5s, re-read each tick via RwLock). Adapter list cached (default 30s). Write lock released before network I/O (failover metrics swap) to avoid blocking the monitor loop and Tauri commands. All blocking calls (PowerShell, ping.exe) run in `tokio::task::spawn_blocking` with `JoinError` handling; a panicking worker thread is logged and the tick abandoned rather than propagated.
 - **Ping parsing**: `parse_latency()` strips non-ASCII before matching keywords (`time`, `temps`, `dure`), because `ping.exe` emits the console code page (cp437/cp850 on FR Windows) and UTF-8 decoding turns accents into replacement chars. Success requires exit code 0 AND a parsed latency.
 - **System tray**: X hides window to tray, "Quitter" exits. Context menu: Afficher/Quitter
-- **19 Tauri commands**: list_adapters, enable_adapter, disable_adapter, test_connectivity, test_adapter_connectivity, set_routing_metric, configure_load_balancing, configure_failover, get_monitor_state, enable_auto_failover, disable_auto_failover, get_failover_state, get_settings, save_settings, get_logs, get_log_files, get_log_by_date, get_adapter_details, get_all_adapter_details
+- **20 Tauri commands**: list_adapters, enable_adapter, disable_adapter, test_connectivity, test_adapter_connectivity, set_routing_metric, configure_load_balancing, configure_failover, get_monitor_state, enable_auto_failover, disable_auto_failover, get_failover_state, get_settings, save_settings, get_logs, get_app_version, get_log_files, get_log_by_date, get_adapter_details, get_all_adapter_details
 
 ## 🔬 Expert Mode Architecture
 - **Tauri commands**: `get_adapter_details(name)`, `get_all_adapter_details()`
@@ -168,6 +169,8 @@ cd dualink && npm run tauri:build
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
 - **Quality gates**: ✅ `cargo check` / `clippy -D warnings` / `fmt --check` / 22 unit tests — all clean, CI gates on clippy
 - **Version**: 1.1.0 (tagged v1.0.1 is the last published release)
+- **Icons**: ✅ Refaits: deux anneaux entrelacés (« dual links ») en dégradé cyan→violet. `icon.png` 512², `icon.ico` 9 tailles (16→256), `tray-icon.png` 32². Générés par `tools/gen_icons.py` (Pillow), version 1.1.0 du marque
+- **Version affichée**: pastille `v1.1.0` dans l'en-tête, alimentée par la commande `get_app_version` (`CARGO_PKG_VERSION`) — jamais codée en dur dans le JS
 - **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.0.1 released
 - **Releases**: NSIS (Windows), MSI (Windows), ZIP portable (Windows), DMG (macOS), AppImage (Linux), deb (Linux)
 - **CI/CD**: ✅ GitHub Actions (Windows/macOS/Linux), triggered by v* tags, gated on clippy -D warnings

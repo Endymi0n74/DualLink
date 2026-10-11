@@ -60,6 +60,10 @@ export async function getLogs() {
   return invoke('get_logs');
 }
 
+export async function getAppVersion() {
+  return invoke('get_app_version');
+}
+
 export async function getLogFiles() {
   return invoke('get_log_files');
 }

@@ -13,6 +13,28 @@ let selectedLogDate = '';
 let logAutoRefresh = null;
 const MAX_HISTORY = 10;
 let latencyHistory = [];
+let appVersion = '';
+
+// Marque de l'application: deux anneaux entrelacés (deux liens), le même
+// dessin que src-tauri/icons. Version 1.1.0, même dégradé cyan -> violet.
+const LOGO_SVG = '<svg class="header-logo" viewBox="0 0 48 48" fill="none" aria-hidden="true">'
+  + '<defs><linearGradient id="dl-mark" x1="0" y1="0" x2="1" y2="1">'
+  + '<stop offset="0%" stop-color="#00d4ff"/><stop offset="100%" stop-color="#aa66ff"/>'
+  + '</linearGradient></defs>'
+  + '<g stroke="url(#dl-mark)" stroke-width="4.2">'
+  + '<circle cx="17" cy="26" r="10.4"/>'
+  + '<circle cx="31" cy="22" r="10.4"/>'
+  + '</g></svg>';
+
+// Charge la version affichée dans l'en-tête. Une commande absente ou en
+// erreur ne doit pas empêcher l'application de s'afficher.
+export async function loadAppVersion() {
+  try {
+    appVersion = 'v' + await api.getAppVersion();
+  } catch (e) {
+    appVersion = '';
+  }
+}
 
 function getAdapterIcon(desc) {
   const d = desc.toLowerCase();
@@ -81,7 +103,9 @@ export function render() {
   app.innerHTML = '';
   const header = document.createElement('div');
   header.className = 'glass header';
-  header.innerHTML = '<div class="header-left"><span class="header-logo">🌐</span><span class="header-title">DualLink</span></div>'
+  header.innerHTML = '<div class="header-left">' + LOGO_SVG
+    + '<span class="header-title">DualLink</span>'
+    + '<span class="header-version">' + (appVersion || '') + '</span></div>'
     + '<div class="header-nav">'
     + '<button class="nav-btn ' + (currentView === 'main' ? 'active' : '') + '" id="nav-main"><span>🏠</span> Accueil</button>'
     + '<button class="nav-btn ' + (currentView === 'settings' ? 'active' : '') + '" id="nav-settings"><span>⚙️</span> Settings</button>'

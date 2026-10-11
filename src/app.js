@@ -1,8 +1,9 @@
-import { render, refreshAdapters, updateMonitorState, loadSettings } from './ui.js';
+import { render, refreshAdapters, updateMonitorState, loadSettings, loadAppVersion } from './ui.js';
 import { listen } from '@tauri-apps/api/event';
 
 async function init() {
   await loadSettings();
+  await loadAppVersion();
   render();
   await refreshAdapters();
 

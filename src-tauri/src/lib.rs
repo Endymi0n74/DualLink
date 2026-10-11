@@ -298,6 +298,16 @@ fn get_logs() -> Result<String, String> {
     Ok(logger::read_today_log())
 }
 
+/// Version de l'application, lue depuis `Cargo.toml`.
+///
+/// Le frontend affiche cette valeur: la écrire en dur dans le JS obligerait
+/// à toucher deux fichiers à chaque release, et l'affichage finirait par
+/// mentir. `CARGO_PKG_VERSION` suit le bump de version du crate.
+#[tauri::command]
+fn get_app_version() -> Result<String, String> {
+    Ok(env!("CARGO_PKG_VERSION").to_string())
+}
+
 #[tauri::command]
 fn get_log_files() -> Result<Vec<String>, String> {
     Ok(logger::list_log_files())
@@ -416,6 +426,7 @@ pub fn run() {
             get_settings,
             save_settings,
             get_logs,
+            get_app_version,
             get_log_files,
             get_log_by_date,
             get_adapter_details,
@@ -432,7 +443,9 @@ pub fn run() {
                 .build()?;
 
             // Tray icon loaded from an embedded png file.
-            let icon_bytes = include_bytes!("../icons/icon.png");
+            // Dedicated 32x32 asset: `icon.png` is now 512x512 for the
+            // installer, too heavy to downscale in the system tray.
+            let icon_bytes = include_bytes!("../icons/tray-icon.png");
             let tray_icon = Image::from_bytes(icon_bytes).expect("Failed to load tray icon");
 
             let _tray = TrayIconBuilder::new()

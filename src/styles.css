@@ -12,8 +12,11 @@ body::after{width:350px;height:350px;background:radial-gradient(circle,var(--acc
 .glass-glow{box-shadow:var(--shadow-glow)}
 .header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px}
 .header-left{display:flex;align-items:center;gap:12px}
-.header-logo{font-size:28px;line-height:1}
+.header-logo{width:30px;height:30px;flex:0 0 auto;filter:drop-shadow(0 0 8px rgba(0,212,255,.35))}
 .header-title{font-size:22px;font-weight:700;letter-spacing:-.5px;background:linear-gradient(135deg,var(--accent-blue),var(--accent-purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.header-version{font-size:11px;font-weight:600;padding:2px 7px;border-radius:20px;border:1px solid var(--glass-border);background:var(--glass-bg);color:var(--text-muted)}
+/* Version absente (commande indisponible): pas de pastille vide. */
+.header-version:empty{display:none}
 .header-status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary)}
 .header-nav{display:flex;gap:4px}
 .nav-btn{display:flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid transparent;border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:500;cursor:pointer;transition:all .25s}
