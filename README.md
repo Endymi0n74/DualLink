@@ -77,6 +77,10 @@ Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLin
 ```
 
 > ⚠️ L'application demande les **droits admin** au lancement (UAC) pour gérer les cartes réseau.
+>
+> Si votre session Windows est en UAC « refus uniquement » pour votre compte,
+l'élévation peut échouer silencieusement. Lancez alors :
+> `Start-Process ".\duallink.exe" -Verb RunAs`
 
 ---
 

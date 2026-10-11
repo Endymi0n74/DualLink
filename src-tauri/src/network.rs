@@ -173,10 +173,11 @@ pub fn test_connectivity() -> Result<ConnectivityResult> {
 /// Test connectivity on a specific adapter
 ///
 /// L'interface est réellement testée: la route vers la cible est épinglée sur
-/// cette interface avant le ping (cf. `ping_via_interface`).
+/// cette interface avant le ping (cf. `ping_via_interface`), avec repli sur
+/// `ping -S` si l'épinglage est impossible.
 pub fn test_adapter_connectivity(adapter_name: &str) -> Result<ConnectivityResult> {
     let route = RouteTarget::from_adapter_name(adapter_name)?;
-    ping_via_interface(DEFAULT_PING_TARGET, &route)
+    Ok(ping_via_interface_lenient(DEFAULT_PING_TARGET, &route))
 }
 
 // ── Routage forcé (route hôte épinglée) ───────────────────────────
@@ -252,9 +253,8 @@ pub fn unpin_route(target: &str, interface_index: u32) -> Result<()> {
 /// Ping `target` en forçant le passage par `route`.
 ///
 /// La route est épinglée avant le ping et retirée après, quelle que soit
-/// l'issue. Si l'épinglage échoue (interface absente, passerelle inconnue),
-/// aucune mesure n'est renvoyée: continuer à mesurer la route par défaut
-/// donnerait un résultat trompeur.
+/// l'issue. Si l'épinglage échoue, on se replie sur `ping -S` (voir
+/// `ping_via_interface_lenient`).
 pub fn ping_via_interface(target: &str, route: &RouteTarget) -> Result<ConnectivityResult> {
     if !is_valid_ping_target(target) {
         return Err(anyhow!("Invalid ping target '{target}'"));
@@ -288,27 +288,66 @@ pub fn ping_via_interface(target: &str, route: &RouteTarget) -> Result<Connectiv
     result
 }
 
+/// Sonde `target` via `route`, avec repli sur `ping -S` si l'épinglage échoue.
+///
+/// `ping -S` fixe l'adresse source mais laisse Windows choisir l'interface de
+/// sortie: la mesure reste moins fiable que la route épinglée (elle peut
+/// repartir par la route par défaut). Ce repli ne sert que quand la route est
+/// impossible — typiquement droits administrateur manquants, où aucune mesure
+/// ne remontait du tout et tous les adaptateurs semblaient hors ligne.
+///
+/// Le repli est signalé dans le résultat pour que l'appelant puisse distinguer
+/// une mesure fiable d'une mesure dégradée.
+pub fn ping_via_interface_lenient(target: &str, route: &RouteTarget) -> ConnectivityResult {
+    match ping_via_interface(target, route) {
+        Ok(res) => res,
+        Err(e) => {
+            let source_ip = route
+                .source_ip
+                .as_deref()
+                .filter(|s| !s.is_empty() && *s != "N/A");
+
+            match source_ip {
+                Some(src) => {
+                    logger::log_file(&format!(
+                        "WARN route epinglee impossible sur if {} ({}), repli ping -S {src}",
+                        route.interface_index, e
+                    ));
+                    ping_host(target, PING_TIMEOUT_MS, Some(src)).unwrap_or_else(|ping_err| {
+                        logger::log_file(&format!(
+                            "WARN probe interface {} error: {ping_err:#}",
+                            route.interface_index
+                        ));
+                        ConnectivityResult {
+                            reachable: false,
+                            latency_ms: None,
+                        }
+                    })
+                }
+                None => {
+                    logger::log_file(&format!(
+                        "WARN probe interface {} error: {:#}",
+                        route.interface_index, e
+                    ));
+                    ConnectivityResult {
+                        reachable: false,
+                        latency_ms: None,
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Teste plusieurs interfaces, chacune par sa propre route épinglée.
 ///
-/// Les sondes sont séquentielles: plusieurs routes `/32` vers la même cible
-/// coexistent, mais le choix de celle qui sert au ping suit la plus faible
-/// métrique, donc une seule interface est réellement testée à la fois.
+/// Repli sur `ping -S` quand la route est impossible (droits manquants):
+/// sans cela, une app non élevée afficherait tous les adaptateurs hors
+/// ligne alors que la connectivité, elle, fonctionne.
 pub fn probe_routes(target: &str, routes: &[RouteTarget]) -> Vec<(u32, ConnectivityResult)> {
     routes
         .iter()
-        .map(|r| {
-            let res = ping_via_interface(target, r).unwrap_or_else(|e| {
-                logger::log_file(&format!(
-                    "WARN probe interface {} error: {:#}",
-                    r.interface_index, e
-                ));
-                ConnectivityResult {
-                    reachable: false,
-                    latency_ms: None,
-                }
-            });
-            (r.interface_index, res)
-        })
+        .map(|r| (r.interface_index, ping_via_interface_lenient(target, r)))
         .collect()
 }
 
@@ -388,7 +427,7 @@ fn set_adapter_enabled(name: &str, enabled: bool) -> Result<()> {
     let script = format!(
         "$if = Get-NetAdapter -Name '{}' -ErrorAction Stop | Select-Object -First 1; \
          if (-not $if) {{ throw 'Adapter not found' }}; \
-         {}-NetAdapter -InterfaceIndex $if.ifIndex -Confirm:$false -ErrorAction Stop",
+         {}-NetAdapter -InputObject $if -Confirm:$false -ErrorAction Stop",
         escape_ps(name),
         verb
     );

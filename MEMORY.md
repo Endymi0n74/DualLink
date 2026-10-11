@@ -134,6 +134,8 @@ cd dualink && npm run tauri:build
 23. **Clamp de `Settings` non appliqué au chargement** — Un `settings.json` hors bornes n'était borné qu'à l'écriture. Fixed: `Settings::validated()` au chargement ET à la sauvegarde.
 24. **ZIP portable mal nommé (CI)** — Le workflow codait en dur `DualLink_1.0.0_x64-portable.zip`. Depuis v1.0.1, chaque release publiait un ZIP portant le numéro de la version précédente. Fixed: nom dérivé du tag.
 25. **Artefacts macOS/Linux inutilisables** — La CI publiait un .dmg, un .AppImage et un .deb alors que l'app ne peut pas fonctionner ailleurs : elle appelle `powershell.exe` et `ping.exe`, utilise 7 cmdlets Net* et un manifeste UAC `requireAdministrator`. Aucun fallback `cfg(not(windows))` n'existe. Ces trois artefacts (87 Mo) se construisaient et se téléchargeaient pour rien. Fixed: matrice CI limitée à Windows, artefacts morts supprimés de la v1.1.0.
+26. **`Disable-NetAdapter` refuse `-InterfaceIndex`** — La consigne « utiliser `-InterfaceIndex` » a ete appliquee a tort : `Enable-NetAdapter` et `Disable-NetAdapter` n'acceptent QUE `-Name`, `-InterfaceDescription` ou `-InputObject`. Resultat : `FullyQualifiedErrorId: Windows System Error 5` sur chaque bascule de carte. Fixed: `Get-NetAdapter -Name` puis `-InputObject $if`. A verifier avant tout cmdlet: `Get-Command X | Select -ExpandProperty Parameters`.
+27. **Tous les adaptateurs affiches « Deconnecte » alors que le reseau fonctionne** — `probe_routes` marquait `reachable: false` des que `New-NetRoute` echouait. Or cette cmdlet exige les droits admin: sans elevation, le Wi-Fi (IP + passerelle valides) sortait « Deconnecte » alors qu'il repondait en 17 ms. Fixed: repli sur `ping -S <ip_source>` quand la route epinglee est impossible. Le **failover reste strict**: decider sur une mesure degradee recreerait l'oscillation corrigee en #11.
 
 ## 🧩 Architecture Decisions
 - **No framework**: vanilla JS (no React/Vue) — lightweight, fast
@@ -188,7 +190,8 @@ cd dualink && npm run tauri:build
 - **Runtime**: ✅ Aucun appel PowerShell/ping sur le runtime async (`spawn_blocking`)
 - **Statut par adaptateur**: ✅ Mesuré par adaptateur via route épinglée, rafraîchi au rythme du refresh adapters
 - **Dépendances**: `+chrono`, `+tauri-plugin-single-instance`, `-tauri-plugin-shell`, `-windows-sys`
-- **Non testé sur cette machine**: bascule de failover réelle, `New-NetRoute` (shell non élevé; l'app l'est via `app.manifest`)
+- **Testé sur cette machine**: Wi-Fi passe vert (17 ms), `disable_adapter` coupe réellement VMnet1 (vérifié: status `Disabled`)
+- **Limite**: `New-NetRoute` échoue si le processus n'est pas élevé. L'app a le manifeste `requireAdministrator`, mais sur une session UAC « refus uniquement » Windows ne peut pas l'élever: lancer avec `Start-Process -Verb RunAs`. Le repli `ping -S` masque ce cas pour l'affichage.
 
 ## ⏳ Backlog (après tests)
 1. ~~Bundle NSIS~~ ✅ Activé `"active": true` dans `tauri.conf.json` pour installeur distribuable
