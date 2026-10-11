@@ -188,6 +188,11 @@ async fn enable_auto_failover(
         "CMD enable_auto_failover: {primary_name}({primary_index}) -> {secondary_name}({secondary_index})"
     ));
 
+    // Toute activation modifie la table de routage (métriques, routes):
+    // refusée sans élévation, avec un message clair plutôt qu'une sortie
+    // PowerShell tronquée.
+    network::ensure_elevated().map_err(|e| e.to_string())?;
+
     // Résolution des identifiants de route du primaire AVANT toute modification:
     // sans IP ni passerelle, la route hôte de test ne peut pas être créée et le
     // failover testerait la route par défaut, donc le secondaire. Mieux vaut
@@ -262,22 +267,44 @@ async fn disable_auto_failover(state: tauri::State<'_, AppState>) -> Result<Fail
             monitor.failover.config.secondary_index,
         )
     };
+    let mut restore_error: Option<String> = None;
 
     if was_failed_over {
-        blocking(move || {
+        // Désactivation TOUJOURS effective, même si la restauration des
+        // métriques échoue: avec un `?` ici, la commande renverrait une
+        // erreur, le failover resterait actif et l'utilisateur ne pourrait
+        // plus jamais le couper. L'échec est loggé et signalé dans
+        // `last_switch`, la commande réussit pour que l'UI bascule.
+        let restore = blocking(move || {
             network::set_routing_metric(primary_idx, network::METRIC_PRIMARY)
                 .map_err(|e| format!("{e:#}"))?;
             network::set_routing_metric(secondary_idx, network::METRIC_SECONDARY)
                 .map_err(|e| format!("{e:#}"))
         })
-        .await?;
+        .await;
 
-        logger::log_file("CMD disable_auto_failover: restored primary metrics");
+        match restore {
+            Ok(()) => {
+                logger::log_file("CMD disable_auto_failover: restored primary metrics");
+            }
+            Err(e) => {
+                logger::log_file(&format!(
+                    "ERROR disable_auto_failover: restoration des metriques impossible: {e}"
+                ));
+                restore_error = Some(e);
+            }
+        }
     }
 
     let mut monitor = state.monitor_state.write().await;
     monitor.failover.config.enabled = false;
     monitor.failover.is_failed_over = false;
+    if let Some(e) = restore_error {
+        monitor.failover.last_switch = format!(
+            "{} | WARN failover desactive mais metriques non restaurees: {e}",
+            monitor.failover.last_switch
+        );
+    }
     Ok(monitor.failover.clone())
 }
 
@@ -395,7 +422,26 @@ pub fn run() {
     logger::log_file(&format!("Elevated: {}", network::is_elevated()));
 
     let monitor_state = Arc::new(RwLock::new(MonitorState::default()));
-    let settings = Arc::new(RwLock::new(Settings::load()));
+    let loaded_settings = Settings::load();
+
+    // ── Nettoyage des routes de test orphelines ──
+    // Si l'app meurt entre la pose et le retrait d'une route hôte /32 sur la
+    // cible de ping, la route reste en place à métrique 1 et détourne tout le
+    // trafic vers la cible par le primaire, même coupé. Nettoyé au
+    // démarrage; un échec est loggé mais ne bloque jamais le démarrage.
+    if network::is_elevated() {
+        match network::cleanup_stale_test_routes(&loaded_settings.ping_target) {
+            Ok(0) => logger::log_file("Nettoyage routes orphelines: aucune route residuelle"),
+            Ok(n) => logger::log_file(&format!(
+                "Nettoyage routes orphelines: {n} route(s) retiree(s)"
+            )),
+            Err(e) => logger::log_file(&format!("ERROR nettoyage routes orphelines: {e:#}")),
+        }
+    } else {
+        logger::log_file("WARN nettoyage des routes orphelines saute: pas d'eleveation");
+    }
+
+    let settings = Arc::new(RwLock::new(loaded_settings));
 
     tauri::Builder::default()
         // Doit être enregistré en premier: le plugin prend le verrou d'instance

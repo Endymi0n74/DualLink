@@ -106,11 +106,20 @@ fn dirs() -> Option<std::path::PathBuf> {
     })
 }
 
+fn default_status_known() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdapterStatus {
     pub name: String,
     pub reachable: bool,
     pub latency_ms: Option<u64>,
+    /// Faux quand la sonde est dégradée (repli `ping -S`): on ne sait pas
+    /// si l'adaptateur est réellement joignable. `#[serde(default)]` avec
+    /// défaut `true` pour rester lisible par un frontend qui ignore le champ.
+    #[serde(default = "default_status_known")]
+    pub status_known: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -248,6 +257,12 @@ impl Default for MonitorState {
 /// primaire sans passerelle connue (impossible d'épingler la route). Dans ce
 /// cas l'appelant ne prend aucune décision, plutôt que de décider sur une
 /// mesure qui ne teste pas le primaire.
+/// Évite de répéter le WARN « passerelle inconnue » à chaque tick: le log
+/// partait en boucle (12 lignes/s) tant que la passerelle restait absente.
+/// Le flag est réarmé dès que la passerelle redevient connue.
+static WARN_GATEWAY_MISSING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 fn probe_primary(target: &str, config: &FailoverConfig) -> Option<bool> {
     if !config.enabled {
         return None;
@@ -255,9 +270,12 @@ fn probe_primary(target: &str, config: &FailoverConfig) -> Option<bool> {
 
     let gateway = config.primary_gateway.as_deref()?;
     if gateway.trim().is_empty() || gateway == "N/A" {
-        logger::log_file("WARN sonde primaire: passerelle inconnue, décision suspendue");
+        if !WARN_GATEWAY_MISSING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            logger::log_file("WARN sonde primaire: passerelle inconnue, décision suspendue");
+        }
         return None;
     }
+    WARN_GATEWAY_MISSING.store(false, std::sync::atomic::Ordering::Relaxed);
 
     let route = network::RouteTarget {
         interface_index: config.primary_index,
@@ -341,6 +359,7 @@ pub fn start_monitor(
                             network::ConnectivityResult {
                                 reachable: false,
                                 latency_ms: None,
+                                degraded: false,
                             }
                         }
                     };
@@ -383,6 +402,7 @@ pub fn start_monitor(
                             network::ConnectivityResult {
                                 reachable: false,
                                 latency_ms: None,
+                                degraded: false,
                             },
                             None,
                             Vec::new(),
@@ -583,10 +603,28 @@ fn probe_adapter_statuses(
                 .iter()
                 .find(|(index, _)| *index == adapter.interface_index);
 
+            let degraded = probe.is_some_and(|(_, r)| r.degraded);
+            if degraded {
+                // Sonde dégradée: le repli `ping -S` peut repartir par la
+                // route par défaut. L'UI continue d'afficher « Déconnecté »
+                // (champ `reachable: false`, frontend inchangé), mais l'état
+                // réel est « inconnu » — `status_known: false` le signale
+                // pour une prochaine évolution d'affichage.
+                logger::log_file(&format!(
+                    "WARN sonde '{}' (if {}) dégradée: interface non garantie, état inconnu",
+                    adapter.name, adapter.interface_index
+                ));
+            }
+
             AdapterStatus {
                 name: adapter.name.clone(),
-                reachable: probe.is_some_and(|(_, r)| r.reachable),
-                latency_ms: probe.and_then(|(_, r)| r.latency_ms),
+                reachable: !degraded && probe.is_some_and(|(_, r)| r.reachable),
+                latency_ms: if degraded {
+                    None
+                } else {
+                    probe.and_then(|(_, r)| r.latency_ms)
+                },
+                status_known: !degraded,
             }
         })
         .collect()
@@ -747,6 +785,21 @@ mod tests {
     fn seuils_sont_ceux_attendus() {
         assert_eq!(FAILOVER_THRESHOLD, 2);
         assert_eq!(RECOVERY_THRESHOLD, 3);
+    }
+
+    #[test]
+    fn adapter_status_deserialise_sans_status_known() {
+        // Compatibilité: un état sérialisé par une version antérieure (ou un
+        // frontend qui ignore le champ) doit rester lisible, avec l'état
+        // « connu » par défaut.
+        let legacy = r#"{"name": "Wi-Fi", "reachable": true, "latency_ms": 12}"#;
+        let parsed: AdapterStatus = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.status_known);
+
+        let unknown =
+            r#"{"name": "Wi-Fi", "reachable": false, "latency_ms": null, "status_known": false}"#;
+        let parsed: AdapterStatus = serde_json::from_str(unknown).unwrap();
+        assert!(!parsed.status_known);
     }
 
     #[test]

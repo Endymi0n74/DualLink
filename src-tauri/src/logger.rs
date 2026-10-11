@@ -25,9 +25,11 @@ fn log_file_path() -> PathBuf {
 
 /// Vérifie qu'une date fournie par le frontend est bien un `AAAA-MM-JJ`.
 ///
-/// Bloque la traversée de chemin (`../../`) sur `read_log_file`.
+/// La longueur est contrôlée avant chrono, qui accepte les formes padées
+/// (`2026-8-22`) et produirait un nom de fichier hors convention. Bloque
+/// aussi la traversée de chemin (`../../`) sur `read_log_file`.
 fn is_valid_log_date(date: &str) -> bool {
-    NaiveDate::parse_from_str(date, LOG_FILE_DATE_FORMAT).is_ok()
+    date.len() == 10 && NaiveDate::parse_from_str(date, LOG_FILE_DATE_FORMAT).is_ok()
 }
 
 pub fn init() {
@@ -67,17 +69,27 @@ pub fn init() {
             .map(|l| format!("{}:{}", l.file(), l.line()))
             .unwrap_or_else(|| "unknown".to_string());
 
-        log_file(&format!("PANIC [{}] {} at {}", thread_name, msg, location));
+        // `try_lock`, jamais `lock`: si la panique survient pendant une
+        // écriture de `log_file` (verrou détenu), un `lock` ici bloquerait
+        // définitivement le thread en panique. Le verrou est pris quand il
+        // est libre (écriture serialisée), et l'écriture a lieu dans tous
+        // les cas, au risque d'un mélange de lignes.
+        let line = format!(
+            "[{}] PANIC [{}] {} at {}\n",
+            Local::now().format("%H:%M:%S"),
+            thread_name,
+            msg,
+            location
+        );
+        let _guard = WRITE_LOCK.try_lock().ok();
+        append_line(&line);
 
         default_hook(info);
     }));
 }
 
-/// Écrit une ligne horodatée en heure locale dans le log du jour.
-pub fn log_file(msg: &str) {
-    let line = format!("[{}] {}\n", Local::now().format("%H:%M:%S"), msg);
-
-    let _guard = WRITE_LOCK.lock();
+/// Ouvre le log du jour en écriture et y ajoute `line` (sans verrou).
+fn append_line(line: &str) {
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)
@@ -86,6 +98,14 @@ pub fn log_file(msg: &str) {
         let _ = file.write_all(line.as_bytes());
         let _ = file.flush();
     }
+}
+
+/// Écrit une ligne horodatée en heure locale dans le log du jour.
+pub fn log_file(msg: &str) {
+    let line = format!("[{}] {}\n", Local::now().format("%H:%M:%S"), msg);
+
+    let _guard = WRITE_LOCK.lock();
+    append_line(&line);
 }
 
 /// Read today's log file content
@@ -143,6 +163,8 @@ mod tests {
             "..\\..\\x",
             "2026/08/22",
             "2026-8-22.log",
+            "2026-8-22",
+            "20260822",
             "",
             "aujourd'hui",
             "2026-13-01",

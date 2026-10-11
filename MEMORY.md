@@ -190,6 +190,8 @@ cd dualink && npm run tauri:build
 - **Logs**: ✅ `chrono::Local`, nouveau fichier après minuit, dates validées (pas de traversée de chemin)
 - **Single instance**: ✅ Plugin officiel, lock file supprimé
 - **Élévation**: ✅ Manifeste `requireAdministrator` effectif sur les builds release (bug #29) — ressource RT_MANIFEST id 1 vérifiée (`level=requireAdministrator`, espaces de noms 2005/2016); `cargo test` reste exécutable car debug/test gardent le manifeste par défaut
+- **Bannière d'élévation**: ✅ Commande `get_elevation_status` + bandeau rouge persistant dans l'UI si l'app tourne sans droits admin (l'utilisateur voit le blocage AVANT de cliquer)
+- **Backend renforcé (mission A-I, 27 tests)**: ✅ Nettoyage des routes `/32` orphelines au démarrage (PowerShell multi-interfaces, non bloquant); `reachable` = code de sortie du ping (langue-agnostique); champ `degraded` sur `ConnectivityResult` et `status_known` sur `AdapterStatus` (sondes `ping -S` ne simulent plus un adaptateur joignable); `ensure_elevated()` avant toute cmdlet; `disable_auto_failover` désactive TOUJOURS (restauration métriques échouée = WARN dans `last_switch`, pas d'erreur); pin/unpin de route via `route.exe` natif (~10 ms au lieu de 300-800 ms PowerShell) avec builders purs testés + `validate_gateway` IPv4 strict; WARN « passerelle inconnue » loggé une seule fois (flag réarmé); hook de panique en `try_lock` (pas de deadlock si WRITE_LOCK détenu); `is_valid_log_date` exige 10 caractères
 - **Runtime**: ✅ Aucun appel PowerShell/ping sur le runtime async (`spawn_blocking`)
 - **Statut par adaptateur**: ✅ Mesuré par adaptateur via route épinglée, rafraîchi au rythme du refresh adapters
 - **Dépendances**: `+chrono`, `+tauri-plugin-single-instance`, `-tauri-plugin-shell`, `-windows-sys`

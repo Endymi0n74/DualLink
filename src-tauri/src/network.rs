@@ -53,6 +53,12 @@ pub struct NetworkAdapter {
 pub struct ConnectivityResult {
     pub reachable: bool,
     pub latency_ms: Option<u64>,
+    /// Vrai quand la mesure vient du repli `ping -S` (route épinglée
+    /// impossible): le paquet peut repartir par la route par défaut, la
+    /// mesure ne teste donc pas l'interface annoncée. `#[serde(default)]`
+    /// pour rester lisible par un frontend qui ignore le champ.
+    #[serde(default)]
+    pub degraded: bool,
 }
 
 /// Run a PowerShell command and return stdout (no window)
@@ -88,12 +94,13 @@ mod winapi_elev {
             length: u32,
             return_length: *mut u32,
         ) -> i32;
-        pub fn CloseHandle(object: Handle) -> i32;
     }
 
     #[link(name = "kernel32")]
     extern "system" {
         pub fn GetCurrentProcess() -> Handle;
+        // CloseHandle est exporté par kernel32, pas par advapi32.
+        pub fn CloseHandle(object: Handle) -> i32;
     }
 }
 
@@ -133,6 +140,25 @@ pub fn is_elevated() -> bool {
 #[cfg(not(windows))]
 pub fn is_elevated() -> bool {
     true
+}
+
+/// Refuse l'action si le processus n'est pas élevé.
+///
+/// Toutes les cmdlets Net* et `route.exe` (pose de route, métriques,
+/// activation/désactivation) nécessitent les droits administrateur. Mieux
+/// vaut un message clair qu'une sortie PowerShell tronquée (« Accès refusé »,
+/// mojibakée en plus).
+pub fn ensure_elevated() -> Result<()> {
+    if is_elevated() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Droits administrateur manquants: DualLink s'exécute sans élévation, \
+             la commande serait refusée (Accès refusé). Relancez l'application \
+             en tant qu'administrateur (clic droit sur duallink.exe → \
+             Exécuter en tant qu'administrateur)."
+        ))
+    }
 }
 
 // ── Tests de connectivité ─────────────────────────────────────────
@@ -177,15 +203,34 @@ pub fn parse_latency(ping_output: &str) -> Option<u64> {
 
 /// Interprète une sortie `ping.exe` et son code de sortie.
 ///
-/// Un ping n'est réussi que si le code de sortie vaut 0 **et** qu'une latence a
-/// été parsée: sans latence, impossible de distinguer une vraie réponse d'une
-/// sortie tronquée ou inattendue.
+/// `reachable` repose **uniquementement** sur le code de sortie: sur un Windows
+/// dont la langue n'est pas gérée ici (allemand `Zeit=`, espagnol `tiempo=`…),
+/// une latence parsée serait impossible alors que le ping réussit. Exiger une
+/// latence ferait basculer le failover en boucle sur un primaire joignable.
+/// `latency_ms` reste `None` quand le format de sortie n'est pas reconnu.
 pub fn parse_ping_result(ping_output: &str, exit_success: bool) -> ConnectivityResult {
-    let latency_ms = parse_latency(ping_output);
     ConnectivityResult {
-        reachable: exit_success && latency_ms.is_some(),
-        latency_ms,
+        reachable: exit_success,
+        latency_ms: parse_latency(ping_output),
+        // Par défaut: une mesure via route épinglée n'est pas dégradée.
+        degraded: false,
     }
+}
+
+/// Vérifie qu'une chaîne est bien une adresse IPv4: 4 octets (0-255) séparés
+/// par des points. Refuse `""`, `N/A`, `1.2.3`, `1.2.3.4.5`, `256.1.1.1` ou
+/// tout suffixe injection (`1.2.3.4 & calc`).
+pub fn validate_gateway(gateway: &str) -> bool {
+    let octets: Vec<&str> = gateway.split('.').collect();
+    if octets.len() != 4 {
+        return false;
+    }
+    octets.iter().all(|o| {
+        !o.is_empty()
+            && o.len() <= 3
+            && o.chars().all(|c| c.is_ascii_digit())
+            && o.parse::<u16>().is_ok_and(|n| n <= 255)
+    })
 }
 
 /// Vérifie qu'une cible de ping est sûre à passer en argument de processus.
@@ -277,42 +322,119 @@ impl RouteTarget {
     }
 }
 
-/// Crée une route hôte `target/32` sur l'interface donnée, métrique 1.
-///
-/// Si la route existe déjà, elle est remplacée: sinon Windows refuse le
-/// `New-NetRoute` et le test qui suit measure à nouveau la route par défaut.
-pub fn pin_route_via(target: &str, interface_index: u32, gateway: &str) -> Result<()> {
-    let prefix = format!("{target}/32");
-    let script = format!(
-        "Remove-NetRoute -DestinationPrefix '{prefix}' -InterfaceIndex {interface_index} \
-         -Confirm:$false -ErrorAction SilentlyContinue; \
-         New-NetRoute -DestinationPrefix '{prefix}' -InterfaceIndex {interface_index} \
-         -NextHop '{gateway}' -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop",
-        prefix = escape_ps(&prefix),
-        gateway = escape_ps(gateway)
-    );
-    run_powershell(&script).with_context(|| {
-        format!("Failed to pin route to {target} via interface {interface_index}")
-    })?;
+/// Uniquement sur le code de sortie: la sortie de `route.exe` est localisée.
+fn run_route(args: &[String], context: &str) -> Result<()> {
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_hidden_command("route.exe", &borrowed)?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "{context}: route.exe a échoué (code {})",
+            output.status.code().unwrap_or(-1)
+        );
+    }
     Ok(())
+}
+
+/// Arguments purs de `route ADD`: pose une route hôte /32, métrique 1.
+///
+/// Factorisé et pur pour être testable sans exécuter de processus. Aucun
+/// interpréteur de commande n'entre en jeu: les arguments passent
+/// directement à `Command`, donc pas de `cmd /C` ni de concaténation.
+fn build_route_add_args(target: &str, gateway: &str, interface_index: u32) -> Vec<String> {
+    vec![
+        "ADD".to_string(),
+        target.to_string(),
+        "MASK".to_string(),
+        "255.255.255.255".to_string(),
+        gateway.to_string(),
+        "IF".to_string(),
+        interface_index.to_string(),
+        "METRIC".to_string(),
+        "1".to_string(),
+    ]
+}
+
+/// Arguments purs de `route DELETE`: retrait de la route hôte /32.
+fn build_route_delete_args(target: &str, gateway: &str, interface_index: u32) -> Vec<String> {
+    vec![
+        "DELETE".to_string(),
+        target.to_string(),
+        "MASK".to_string(),
+        "255.255.255.255".to_string(),
+        gateway.to_string(),
+        "IF".to_string(),
+        interface_index.to_string(),
+    ]
+}
+
+/// Crée une route hôte `target/32` sur l'interface donnée, métrique 1,
+/// via `route.exe` natif (~10 ms contre 300-800 ms pour PowerShell).
+///
+/// `route ADD` remplace une route existante vers la même destination, pas
+/// besoin de retirer avant. Seul le code de sortie compte: la sortie de
+/// `route.exe` est localisée, on ne la parse pas.
+pub fn pin_route_via(target: &str, interface_index: u32, gateway: &str) -> Result<()> {
+    ensure_elevated()?;
+    if !is_valid_ping_target(target) {
+        return Err(anyhow!("Invalid ping target '{target}'"));
+    }
+    if !validate_gateway(gateway) {
+        return Err(anyhow!("Invalid gateway '{gateway}'"));
+    }
+
+    let args = build_route_add_args(target, gateway, interface_index);
+    run_route(
+        &args,
+        &format!("pin route {target} via if {interface_index}"),
+    )
+    .with_context(|| format!("Failed to pin route to {target} via interface {interface_index}"))
 }
 
 /// Supprime la route hôte créée par `pin_route_via`.
 ///
-/// Sans effet si la route n'existe pas: le retrait est toujours tenté, y
-/// compris quand le ping a échoué ou que l'interface est tombée.
-pub fn unpin_route(target: &str, interface_index: u32) -> Result<()> {
+/// Sans effet si la route n'existe pas (`route DELETE` renvoie 0 dans ce
+/// cas): le retrait est toujours tenté, y compris quand le ping a échoué ou
+/// que l'interface est tombée.
+pub fn unpin_route(target: &str, interface_index: u32, gateway: &str) -> Result<()> {
+    ensure_elevated()?;
+    if !is_valid_ping_target(target) || !validate_gateway(gateway) {
+        return Err(anyhow!(
+            "Invalid route parameters for unpin ({target}, {gateway})"
+        ));
+    }
+
+    let args = build_route_delete_args(target, gateway, interface_index);
+    run_route(
+        &args,
+        &format!("unpin route {target} via if {interface_index}"),
+    )
+    .with_context(|| format!("Failed to unpin route to {target} via interface {interface_index}"))
+}
+
+/// Retire TOUTES les routes `target/32` laissées en place sur TOUTES les
+/// interfaces (crash ou arrêt entre la pose et le retrait d'une sonde).
+///
+/// PowerShell est conservé ici, et uniquement ici: `route DELETE` exige le
+/// couple passerelle+interface, inconnues pour une route orpheline héritée
+/// d'une session précédente. `Remove-NetRoute -DestinationPrefix` sans
+/// `-InterfaceIndex` frappe toutes les interfaces, ce que `route.exe` ne
+/// sait pas faire. Retourne le nombre de routes retirées.
+pub fn cleanup_stale_test_routes(target: &str) -> Result<u64> {
+    ensure_elevated()?;
+    if !is_valid_ping_target(target) {
+        return Err(anyhow!("Invalid ping target '{target}'"));
+    }
+
     let prefix = format!("{target}/32");
     let script = format!(
-        "Remove-NetRoute -DestinationPrefix '{}' -InterfaceIndex {} \
-         -Confirm:$false -ErrorAction SilentlyContinue",
-        escape_ps(&prefix),
-        interface_index
+        "$r = @(Get-NetRoute -DestinationPrefix '{prefix}' -ErrorAction SilentlyContinue); \
+         if ($r.Count -gt 0) {{ $r | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue }}; \
+         Write-Output $r.Count",
+        prefix = escape_ps(&prefix)
     );
-    run_powershell(&script).with_context(|| {
-        format!("Failed to unpin route to {target} via interface {interface_index}")
-    })?;
-    Ok(())
+    let output = run_powershell(&script).context("Failed to cleanup stale test routes")?;
+    let count = output.trim().parse::<u64>().unwrap_or(0);
+    Ok(count)
 }
 
 /// Ping `target` en forçant le passage par `route`.
@@ -331,9 +453,9 @@ pub fn ping_via_interface(target: &str, route: &RouteTarget) -> Result<Connectiv
         .as_deref()
         .filter(|s| !s.is_empty() && *s != "N/A");
 
-    if gateway.is_empty() || gateway == "N/A" {
+    if gateway.is_empty() || gateway == "N/A" || !validate_gateway(gateway) {
         return Err(anyhow!(
-            "No default gateway on interface {}",
+            "No usable default gateway on interface {}",
             route.interface_index
         ));
     }
@@ -343,7 +465,7 @@ pub fn ping_via_interface(target: &str, route: &RouteTarget) -> Result<Connectiv
 
     // Le retrait est toujours tenté: une route laissée en place fausserait
     // toutes les mesures suivantes, y compris le ping global du monitor.
-    if let Err(e) = unpin_route(target, route.interface_index) {
+    if let Err(e) = unpin_route(target, route.interface_index, gateway) {
         logger::log_file(&format!(
             "WARN unpin route '{}' interface {}: {:#}",
             target, route.interface_index, e
@@ -378,16 +500,23 @@ pub fn ping_via_interface_lenient(target: &str, route: &RouteTarget) -> Connecti
                         "WARN route epinglee impossible sur if {} ({}), repli ping -S {src}",
                         route.interface_index, e
                     ));
-                    ping_host(target, PING_TIMEOUT_MS, Some(src)).unwrap_or_else(|ping_err| {
-                        logger::log_file(&format!(
-                            "WARN probe interface {} error: {ping_err:#}",
-                            route.interface_index
-                        ));
-                        ConnectivityResult {
-                            reachable: false,
-                            latency_ms: None,
-                        }
-                    })
+                    let mut res =
+                        ping_host(target, PING_TIMEOUT_MS, Some(src)).unwrap_or_else(|ping_err| {
+                            logger::log_file(&format!(
+                                "WARN probe interface {} error: {ping_err:#}",
+                                route.interface_index
+                            ));
+                            ConnectivityResult {
+                                reachable: false,
+                                latency_ms: None,
+                                degraded: false,
+                            }
+                        });
+                    // Le repli `ping -S` ne garantit pas l'interface de sortie:
+                    // la mesure est signalée dégradée pour que l'appelant ne
+                    // la présente pas comme une mesure fiable.
+                    res.degraded = true;
+                    res
                 }
                 None => {
                     logger::log_file(&format!(
@@ -397,6 +526,7 @@ pub fn ping_via_interface_lenient(target: &str, route: &RouteTarget) -> Connecti
                     ConnectivityResult {
                         reachable: false,
                         latency_ms: None,
+                        degraded: false,
                     }
                 }
             }
@@ -482,19 +612,13 @@ pub fn disable_adapter(name: &str) -> Result<()> {
 
 /// Active ou désactive un adaptateur.
 ///
-/// Le nom est d'abord résolu en index d'interface: les noms d'adaptateurs sont
-/// traduits selon la locale (`Ethernet`, `Ethernet 2`, `Connexion réseau
-/// local`…), l'index ne l'est pas. Le nom reste utilisé pour la résolution,
-/// d'où l'échappement PowerShell.
+/// Le nom est résolu par `Get-NetAdapter -Name`, puis l'objet retourné est
+/// passé aux cmdlets via `-InputObject`. Pas de `-InterfaceIndex` ici:
+/// `Enable-NetAdapter`/`Disable-NetAdapter` refusent ce paramètre sur ce
+/// système (« Impossible de trouver un paramètre correspondant », bug #26).
+/// Le nom peut être localisé, d'où l'échappement PowerShell.
 fn set_adapter_enabled(name: &str, enabled: bool) -> Result<()> {
-    if !is_elevated() {
-        anyhow::bail!(
-            "Droits administrateur manquants: DualLink s'exécute sans élévation, \
-             PowerShell refuserait la commande (Accès refusé). Relancez l'application \
-             en tant qu'administrateur (clic droit sur duallink.exe → \
-             Exécuter en tant qu'administrateur)."
-        );
-    }
+    ensure_elevated()?;
 
     let verb = if enabled { "Enable" } else { "Disable" };
     let action = if enabled { "enable" } else { "disable" };
@@ -514,6 +638,7 @@ fn set_adapter_enabled(name: &str, enabled: bool) -> Result<()> {
 /// `-AutomaticMetric Disabled` est indispensable: sans lui, Windows continue
 /// d'appliquer la métrique automatique et ignore `-InterfaceMetric`.
 pub fn set_routing_metric(interface_index: u32, metric: u32) -> Result<()> {
+    ensure_elevated()?;
     let script = format!(
         "Set-NetIPInterface -InterfaceIndex {interface_index} -AddressFamily IPv4 \
          -AutomaticMetric Disabled -InterfaceMetric {metric} -ErrorAction Stop"
@@ -774,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_resultat_exige_code_sortie_et_latence() {
+    fn parse_resultat_depend_du_code_de_sortie() {
         let ok_en = parse_ping_result(PING_EN, true);
         assert!(ok_en.reachable);
         assert_eq!(ok_en.latency_ms, Some(14));
@@ -783,14 +908,84 @@ mod tests {
         assert!(ok_fr.reachable);
         assert_eq!(ok_fr.latency_ms, Some(14));
 
-        // Code 0 mais aucune latence: sortie tronquée, résultat non fiable.
-        let truncated = parse_ping_result("Pinging 8.8.8.8 ...\n", true);
-        assert!(!truncated.reachable);
-        assert_eq!(truncated.latency_ms, None);
+        // Code 0 sans latence lisible (langue non gérée, sortie tronquée…):
+        // le ping a réussi, donc joignable, avec une latence inconnue.
+        let no_latency = parse_ping_result("Zeit=14ms\n", true);
+        assert!(no_latency.reachable);
+        assert_eq!(no_latency.latency_ms, None);
+        assert!(!no_latency.degraded);
 
         // Latence lisible mais code de sortie non nul: échec.
         assert!(!parse_ping_result(PING_FAIL_FR, false).reachable);
         assert!(!parse_ping_result(PING_EN, false).reachable);
+    }
+
+    #[test]
+    fn connectivity_result_deserialise_sans_champ_degraded() {
+        // Compatibilité avec un frontend qui n'envoie/ignore pas `degraded`.
+        let legacy = r#"{"reachable": true, "latency_ms": 12}"#;
+        let parsed: ConnectivityResult = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.reachable);
+        assert_eq!(parsed.latency_ms, Some(12));
+        assert!(!parsed.degraded);
+
+        let with_flag = r#"{"reachable": false, "latency_ms": null, "degraded": true}"#;
+        let parsed: ConnectivityResult = serde_json::from_str(with_flag).unwrap();
+        assert!(parsed.degraded);
+    }
+
+    #[test]
+    fn validate_gateway_adresse_ipv4_stricte() {
+        assert!(validate_gateway("192.168.1.1"));
+        assert!(validate_gateway("0.0.0.0"));
+        assert!(validate_gateway("255.255.255.255"));
+
+        assert!(!validate_gateway(""));
+        assert!(!validate_gateway("N/A"));
+        assert!(!validate_gateway("1.2.3"));
+        assert!(!validate_gateway("1.2.3.4.5"));
+        assert!(!validate_gateway("256.1.1.1"));
+        assert!(!validate_gateway("1.2.3.4 & calc"));
+        assert!(!validate_gateway("a.b.c.d"));
+        assert!(!validate_gateway("1..2.3"));
+    }
+
+    #[test]
+    fn args_route_add_exacts() {
+        let args = build_route_add_args("8.8.8.8", "192.168.1.1", 12);
+        assert_eq!(
+            args,
+            vec![
+                "ADD",
+                "8.8.8.8",
+                "MASK",
+                "255.255.255.255",
+                "192.168.1.1",
+                "IF",
+                "12",
+                "METRIC",
+                "1",
+            ]
+        );
+        // Aucun argument ne passe par un interpréteur de commande.
+        assert!(args.iter().all(|a| !a.contains(['&', '|', '"'])));
+    }
+
+    #[test]
+    fn args_route_delete_exacts() {
+        let args = build_route_delete_args("8.8.8.8", "192.168.1.1", 12);
+        assert_eq!(
+            args,
+            vec![
+                "DELETE",
+                "8.8.8.8",
+                "MASK",
+                "255.255.255.255",
+                "192.168.1.1",
+                "IF",
+                "12",
+            ]
+        );
     }
 
     #[test]
