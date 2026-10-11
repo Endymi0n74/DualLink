@@ -668,3 +668,20 @@ function showToast(message, type) {
     setTimeout(() => toast.remove(), 300);
   }, 3000);
 }
+
+// Message affiché quand l'utilisateur clique sur X: l'application est
+// masquée dans la zone de notification, pas fermée. Sans ce message, il la
+// cherche dans la barre des tâches et conclut qu'elle a planté.
+export function showTrayHint() {
+  const container = document.getElementById('toasts');
+  if (!container) return;
+
+  // Pas de timeout: la fenêtre se cache 4s plus tard et emporte le toast.
+  // L'utilisateur a eu le temps de lire, et rien ne traîne à l'écran.
+  const toast = document.createElement('div');
+  toast.className = 'toast info tray-hint';
+  toast.innerHTML = '<span class="toast-icon">📥</span>'
+    + '<span>DualLink reste actif dans la zone de notification.<br>'
+    + 'Clic droit sur son icône (près de l\'horloge) → <b>Quitter</b>.</span>';
+  container.appendChild(toast);
+}

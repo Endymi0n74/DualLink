@@ -72,6 +72,9 @@ body::after{width:350px;height:350px;background:radial-gradient(circle,var(--acc
 .toast.success{border-left:3px solid var(--accent-green)}
 .toast.error{border-left:3px solid var(--accent-red)}
 .toast.info{border-left:3px solid var(--accent-blue)}
+/* Astuce "X = masquer dans le tray": message plus long, reste affiché. */
+.toast.tray-hint{max-width:380px;border-left:3px solid var(--accent-purple);animation:toast-in .3s ease forwards,pulse-border 2s ease-in-out 2}
+.toast.tray-hint b{color:var(--accent-blue)}
 .toast-icon{font-size:16px;flex-shrink:0}
 .toast.exiting{animation:toast-out .3s ease forwards}
 @keyframes toast-in{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}

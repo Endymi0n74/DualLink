@@ -7,7 +7,7 @@ use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
 use tokio::sync::RwLock;
 
@@ -470,13 +470,36 @@ pub fn run() {
                 .build(app)?;
 
             // ── Window close = hide to tray ──
-            // X hides the window; only "Quitter" in tray menu exits
+            // X hides the window; only "Quitter" in tray menu exits.
+            // The first hide shows an in-app notice before the window
+            // disappears, so the user knows the app is still running and
+            // where to find it (many don't look in the notification area).
             if let Some(window) = app.get_webview_window("main") {
                 let w_clone = window.clone();
+                let app_handle = app.handle().clone();
+                let hide_notice_shown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = w_clone.hide();
+
+                        let first_hide =
+                            !hide_notice_shown.swap(true, std::sync::atomic::Ordering::Relaxed);
+
+                        if first_hide {
+                            // Émet l'info, laisse le toast s'afficher, puis
+                            // cache. 4s: le message nomme deux actions
+                            // (« zone de notification », « clic droit →
+                            // Quitter »), illisible en 1,5s.
+                            let _ = app_handle.emit("hide-to-tray-notice", ());
+                            let w = w_clone.clone();
+                            tauri::async_runtime::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
+                                let _ = w.hide();
+                            });
+                        } else {
+                            let _ = w_clone.hide();
+                        }
                     }
                 });
             }
