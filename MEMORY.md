@@ -133,6 +133,7 @@ cd dualink && npm run tauri:build
 22. **`enable_adapter` par nom** — Les noms d'adaptateurs sont localisés. Fixed: résolution nom → `-InterfaceIndex` (l'échappement reste nécessaire pour la résolution).
 23. **Clamp de `Settings` non appliqué au chargement** — Un `settings.json` hors bornes n'était borné qu'à l'écriture. Fixed: `Settings::validated()` au chargement ET à la sauvegarde.
 24. **ZIP portable mal nommé (CI)** — Le workflow codait en dur `DualLink_1.0.0_x64-portable.zip`. Depuis v1.0.1, chaque release publiait un ZIP portant le numéro de la version précédente. Fixed: nom dérivé du tag.
+25. **Artefacts macOS/Linux inutilisables** — La CI publiait un .dmg, un .AppImage et un .deb alors que l'app ne peut pas fonctionner ailleurs : elle appelle `powershell.exe` et `ping.exe`, utilise 7 cmdlets Net* et un manifeste UAC `requireAdministrator`. Aucun fallback `cfg(not(windows))` n'existe. Ces trois artefacts (87 Mo) se construisaient et se téléchargeaient pour rien. Fixed: matrice CI limitée à Windows, artefacts morts supprimés de la v1.1.0.
 
 ## 🧩 Architecture Decisions
 - **No framework**: vanilla JS (no React/Vue) — lightweight, fast
@@ -173,7 +174,7 @@ cd dualink && npm run tauri:build
 - **Version affichée**: pastille `v1.1.0` dans l'en-tête, alimentée par la commande `get_app_version` (`CARGO_PKG_VERSION`) — jamais codée en dur dans le JS
 - **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.0.1 released
 - **Releases**: NSIS (Windows), MSI (Windows), ZIP portable (Windows), DMG (macOS), AppImage (Linux), deb (Linux)
-- **CI/CD**: ✅ GitHub Actions (Windows/macOS/Linux), triggered by v* tags, gated on clippy -D warnings
+- **CI/CD**: ✅ GitHub Actions, **Windows uniquement**, déclenché par tags v*, gardé par clippy -D warnings
 - **README**: ✅ Documentation complète (features, architecture, build, backlog)
 
 ## 📊 Current Status (2026-10-11)
@@ -202,7 +203,7 @@ cd dualink && npm run tauri:build
 10. **Crash reporting** — envoyer logs panic vers endpoint
 11. **Passerelle primaire figée** — `FailoverConfig.primary_gateway` est résolue à l'activation. Un changement de passerelle (reconnexion PPPoE, DHCP) invalide la route jusqu'à réactivation du failover
 12. **Renommer `configure_load_balancing`** — nom trompeur (répartition de priorité, pas de load balancing). Conservée pour ne pas casser le frontend
-13. **CI multiplateforme inutile** — le workflow construit macOS/Linux alors que l'app dépend de PowerShell, `ping.exe`, `New-NetRoute` et d'un manifeste UAC Windows
+13. ~~CI multiplateforme~~ ✅ Supprimé le 2026-10-11 — macOS et Linux ne sont plus construits (voir bug #25)
 
 ## ⚠️ Known Issues / TODO
 - **Bundle**: ✅ NSIS + MSI + ZIP portable + DMG + AppImage + deb — all generated via `tauri build`. Language: FR (1036).

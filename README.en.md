@@ -2,7 +2,7 @@
 
 **Windows network card manager** — Share and pool your internet connections (phone + Box, for example) with smart automatic failover.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.1.0-brightgreen)
 
 [🇫🇷 Français](README.md) · **🇬🇧 English**
 
@@ -64,7 +64,10 @@ Do you have a sluggish **ADSL Box** and a **shared phone connection**? DualLink 
 ---
 ### Download the installer
 
-Download from the [GitHub Releases](https://github.com/Endymi0n74/DualLink/releases).
+Download from the [GitHub Releases](https://github.com/Endymi0n74/DualLink/releases):
+- `DualLink_<version>_x64-setup.exe` — NSIS installer
+- `DualLink_<version>_x64_en-US.msi` — MSI
+- `DualLink_<version>_x64-portable.zip` — portable build
 
 ### Launch
 
@@ -84,6 +87,7 @@ Internet UP   → 3 succès consécutifs (15s) → Restaure primary
 ```
 
 - **Debouncing** to prevent flapping
+- **Tests the primary, not the secondary**: a `/32` host route is pinned to the primary (metric 1) before each probe, otherwise the ping would follow the default route through the secondary and the switch would oscillate
 - Automatic metric swap (metric 10 → 100)
 - UI banner with standby/active status + disable button
 - Lock released before network calls — the monitor never blocks

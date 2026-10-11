@@ -65,7 +65,10 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 ---
 ### Télécharger l'installeur
 
-Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases).
+Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLink/releases) :
+- `DualLink_<version>_x64-setup.exe` — installeur NSIS
+- `DualLink_<version>_x64_en-US.msi` — MSI
+- `DualLink_<version>_x64-portable.zip` — version portable
 
 ### Lancer
 
