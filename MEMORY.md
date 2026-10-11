@@ -173,9 +173,9 @@ cd dualink && npm run tauri:build
 - **Single instance**: ✅ Plugin `tauri-plugin-single-instance`, focuses main window on 2nd launch
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
 - **Quality gates**: ✅ `cargo check` / `clippy -D warnings` / `fmt --check` / 22 unit tests — all clean, CI gates on clippy
-- **Version**: 1.2.0 (tagged v1.1.0 is the last published release)
+- **Version**: 1.2.1 (tagged v1.1.0 is the last published release)
 - **Icons**: ✅ Refaits: deux anneaux entrelacés (« dual links ») en dégradé cyan→violet. `icon.png` 512², `icon.ico` 9 tailles (16→256), `tray-icon.png` 32². Générés par `tools/gen_icons.py` (Pillow), version 1.1.0 du marque
-- **Version affichée**: pastille `v1.2.0` dans l'en-tête, alimentée par la commande `get_app_version` (`CARGO_PKG_VERSION`) — jamais codée en dur dans le JS
+- **Version affichée**: pastille `v1.2.1` dans l'en-tête, alimentée par la commande `get_app_version` (`CARGO_PKG_VERSION`) — jamais codée en dur dans le JS
 - **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.1.0 released
 - **Releases**: NSIS (Windows), MSI (Windows), ZIP portable (Windows) — artefacts macOS/Linux supprimés (bug #25)
 - **CI/CD**: ✅ GitHub Actions, **Windows uniquement**, déclenché par tags v*, gardé par clippy -D warnings
@@ -183,7 +183,7 @@ cd dualink && npm run tauri:build
 
 ## 📊 Current Status (2026-10-11)
 - **Build**: ✅ `cargo check`, `clippy -D warnings`, `fmt --check` et 22 tests unitaires propres
-- **Version**: 1.2.0 (dernier tag publié : v1.1.0)
+- **Version**: 1.2.1 (dernier tag publié : v1.1.0)
 - **Failover**: ✅ Oscillation supprimée — le primaire est testé via une route hôte `/32` épinglée, pas via la route par défaut
 - **Métriques**: ✅ `-AutomaticMetric Disabled` appliqué (sinon Windows ignorait `-InterfaceMetric`)
 - **Forwarding**: ✅ Supprimé (la machine ne se comporte plus en routeur)

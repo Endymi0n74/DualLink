@@ -1,6 +1,6 @@
 {
   "name": "duallink",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Gestionnaire de connexions réseau - Load Balancing & Failover",
   "type": "module",
   "scripts": {
