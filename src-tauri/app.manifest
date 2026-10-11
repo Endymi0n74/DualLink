@@ -3,7 +3,7 @@
   <assemblyIdentity
     type="win32"
     name="DualLink"
-    version="1.1.0.0"
+    version="1.2.0.0"
     processorArchitecture="*"/>
   <description>DualLink - Network Adapter Manager</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
