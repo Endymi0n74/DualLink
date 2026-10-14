@@ -2,7 +2,7 @@
 
 **Gestionnaire de cartes réseau Windows** — Partagez et mutualisez vos connexions internet (téléphone + Box par exemple) avec un failover automatique intelligent.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.2.2-brightgreen)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.2.3-brightgreen)
 
 **🇫🇷 Français** · [🇬🇧 English](README.en.md)
 
@@ -96,6 +96,7 @@ Internet UP   → 3 succès consécutifs (15s) → Restaure primary
 - Métriques swap automatique (metric 10 → 100), avec `-AutomaticMetric Disabled` (sans lui Windows ignore `-InterfaceMetric`)
 - Banner UI avec statut standby/actif + bouton désactiver
 - Lock libéré avant appels réseau — pas de blocage du monitor
+- Désactivation pendant une bascule et fermeture de l'application : métriques nominales rétablies
 
 ---
 

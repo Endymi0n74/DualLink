@@ -2,7 +2,7 @@
 
 **Windows network card manager** — Share and pool your internet connections (phone + Box, for example) with smart automatic failover.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.2.2-brightgreen)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.2.3-brightgreen)
 
 [🇫🇷 Français](README.md) · **🇬🇧 English**
 
@@ -91,6 +91,7 @@ Internet UP   → 3 succès consécutifs (15s) → Restaure primary
 - Automatic metric swap (metric 10 → 100)
 - UI banner with standby/active status + disable button
 - Lock released before network calls — the monitor never blocks
+- Disabling failover during a switch or quitting the app restores normal metrics
 
 ---
 

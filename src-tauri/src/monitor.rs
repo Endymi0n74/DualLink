@@ -251,18 +251,18 @@ impl Default for MonitorState {
 
 // ─── Sonde du primaire ────────────────────────────────────────────
 
-/// Teste la joignabilité du PRIMAIRE via une route hôte épinglée.
-///
-/// Retourne `None` quand la sonde n'a pas lieu d'être: failover désactivé, ou
-/// primaire sans passerelle connue (impossible d'épingler la route). Dans ce
-/// cas l'appelant ne prend aucune décision, plutôt que de décider sur une
-/// mesure qui ne teste pas le primaire.
 /// Évite de répéter le WARN « passerelle inconnue » à chaque tick: le log
 /// partait en boucle (12 lignes/s) tant que la passerelle restait absente.
 /// Le flag est réarmé dès que la passerelle redevient connue.
 static WARN_GATEWAY_MISSING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Teste la joignabilité du PRIMAIRE via une route hôte épinglée.
+///
+/// Retourne `None` quand la sonde n'a pas lieu d'être: failover désactivé, ou
+/// primaire sans passerelle connue (impossible d'épingler la route). Dans ce
+/// cas l'appelant ne prend aucune décision, plutôt que de décider sur une
+/// mesure qui ne teste pas le primaire.
 fn probe_primary(target: &str, config: &FailoverConfig) -> Option<bool> {
     if !config.enabled {
         return None;
@@ -474,11 +474,21 @@ pub fn start_monitor(
             // table de routage, et la bascule est retentée au tick suivant.
             let metrics_applied = apply_metrics(&metrics_to_set).await;
 
+            // Métriques nominales à rétablir si le failover a été désactivé
+            // pendant l'application (elle dure plusieurs secondes, hors verrou).
+            let mut revert_nominal: Option<(u32, u32)> = None;
             if let Some(failed_over) = failed_over_update {
-                if metrics_applied {
-                    let mut state_guard = state.write().await;
-                    let fo = &mut state_guard.failover;
+                let mut state_guard = state.write().await;
+                let fo = &mut state_guard.failover;
 
+                // Vérifié SOUS verrou d'écriture, en même temps que la publication:
+                // `disable_auto_failover` a pu passer `enabled` à false sans voir
+                // la bascule en cours. On ne publie alors rien et on remet les
+                // métriques nominales, sinon le secondaire resterait prioritaire
+                // sans que plus rien ne le restaure.
+                if !fo.config.enabled {
+                    revert_nominal = Some((fo.config.primary_index, fo.config.secondary_index));
+                } else if metrics_applied {
                     if fo.is_failed_over != failed_over {
                         fo.last_switch = now_label();
 
@@ -517,6 +527,20 @@ pub fn start_monitor(
                         counters.successes = RECOVERY_THRESHOLD;
                         counters.failures = 0;
                     }
+                }
+            }
+
+            if let Some((primary, secondary)) = revert_nominal {
+                logger::log_file(
+                    "FAILOVER: désactivé pendant la bascule, métriques nominales rétablies",
+                );
+                if !apply_metrics(&[
+                    (primary, network::METRIC_PRIMARY),
+                    (secondary, network::METRIC_SECONDARY),
+                ])
+                .await
+                {
+                    logger::log_file("ERROR rétablissement des métriques nominales incomplet");
                 }
             }
 

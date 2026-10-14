@@ -173,17 +173,17 @@ cd dualink && npm run tauri:build
 - **Single instance**: ✅ Plugin `tauri-plugin-single-instance`, focuses main window on 2nd launch
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
 - **Quality gates**: ✅ `cargo check` / `clippy -D warnings` / `fmt --check` / 22 unit tests — all clean, CI gates on clippy
-- **Version**: 1.2.2 (tagged v1.2.1 is the last published release)
+- **Version**: 1.2.3 en préparation — dernière release publiée : v1.2.2
 - **Icons**: ✅ Refaits: deux anneaux entrelacés (« dual links ») en dégradé cyan→violet. `icon.png` 512², `icon.ico` 9 tailles (16→256), `tray-icon.png` 32². Générés par `tools/gen_icons.py` (Pillow), version 1.1.0 du marque
-- **Version affichée**: pastille `v1.2.2` dans l'en-tête, alimentée par la commande `get_app_version` (`CARGO_PKG_VERSION`) — jamais codée en dur dans le JS
+- **Version affichée**: pastille `v1.2.3` dans l'en-tête, alimentée par la commande `get_app_version` (`CARGO_PKG_VERSION`) — jamais codée en dur dans le JS
 - **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.1.0 released
 - **Releases**: NSIS (Windows), MSI (Windows), ZIP portable (Windows) — artefacts macOS/Linux supprimés (bug #25)
 - **CI/CD**: ✅ GitHub Actions, **Windows uniquement**, déclenché par tags v*, gardé par clippy -D warnings
 - **README**: ✅ Documentation complète (features, architecture, build, backlog)
 
-## 📊 Current Status (2026-10-11)
-- **Build**: ✅ `cargo check`, `clippy -D warnings`, `fmt --check` et 22 tests unitaires propres
-- **Version**: 1.2.2 (tag v1.2.2 publié et vérifié le 2026-10-11 — setup.exe 2,3 Mo, msi 3,4 Mo, portable zip 3,0 Mo)
+## 📊 Current Status (2026-10-14)
+- **Build**: ✅ `cargo check`, `clippy -D warnings`, `fmt --check` et 27 tests unitaires propres
+- **Version**: 1.2.2 (dernière release publiée; statut de v1.2.3 suivi ci-dessous).
 - **Failover**: ✅ Oscillation supprimée — le primaire est testé via une route hôte `/32` épinglée, pas via la route par défaut
 - **Métriques**: ✅ `-AutomaticMetric Disabled` appliqué (sinon Windows ignorait `-InterfaceMetric`)
 - **Forwarding**: ✅ Supprimé (la machine ne se comporte plus en routeur)
@@ -197,6 +197,20 @@ cd dualink && npm run tauri:build
 - **Dépendances**: `+chrono`, `+tauri-plugin-single-instance`, `-tauri-plugin-shell`, `-windows-sys`
 - **Testé sur cette machine**: Wi-Fi passe vert (17 ms), `disable_adapter` coupe réellement VMnet1 (vérifié: status `Disabled`), toast « masqué dans le tray » lisible avant fermeture (4s validé à l'usage); exe release 1.2.2 reconstruit depuis le tag et relancé: `Elevated: true`, zéro événement SideBySide (non-régression #29)
 - **Limite**: Toute action nécessitant l'élévation échoue si le processus ne l'est pas. Depuis le fix #29, un lancement normal déclenche l'invite UAC; si un contexte lance l'exe sans élévation, l'app le détecte (`network::is_elevated()`, log `Elevated: false`) et renvoie un message clair (« Droits administrateur manquants… ») au lieu d'une sortie PowerShell. Le repli `ping -S` masque encore ce cas pour l'affichage des sondes.
+
+## 📦 Release v1.2.3 (2026-10-14)
+- Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json` et `app.manifest`.
+- Corrections failover : restauration des métriques nominales lors de la désactivation pendant la bascule et à la fermeture via le menu Quitter.
+- README FR/EN et badges version mis à jour.
+- Vérifications locales : frontend build, `cargo fmt --check`, `cargo check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (27/27) et build Tauri release Windows réussis.
+- Artefacts générés : NSIS 2,21 Mio et MSI 3,29 Mio. Le ZIP portable est généré par le workflow CI.
+- Publication GitHub à confirmer après push du tag et succès du workflow.
+
+## 🔧 Session de revue (non commitée)
+- **Course failover / désactivation**: ✅ `disable_auto_failover` passe `enabled=false` et lit `is_failed_over` sous le MÊME verrou d'écriture; le monitor revérifie `enabled` sous verrou avant de publier une bascule et, si désactivé pendant l'application, remet les métriques nominales (sinon métriques permutées sans rien pour les restaurer)
+- **Sortie (menu Quitter)**: ✅ `restore_nominal_metrics_if_failed_over` restaure les métriques avant `app.exit(0)` si un failover est actif
+- **Doc**: `probe_primary` avait la doc du static `WARN_GATEWAY_MISSING` attachée; remise en place
+- **Vérifié**: `cargo check` propre, `cargo test` 27/27. Non vérifié: comportement réel (bascule en cours + désactivation, sortie avec failover actif) — à tester sur la machine avec droits admin
 
 ## ⏳ Backlog (après tests)
 1. ~~Bundle NSIS~~ ✅ Activé `"active": true` dans `tauri.conf.json` pour installeur distribuable

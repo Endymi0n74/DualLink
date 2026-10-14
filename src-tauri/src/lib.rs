@@ -258,11 +258,18 @@ async fn enable_auto_failover(
 async fn disable_auto_failover(state: tauri::State<'_, AppState>) -> Result<FailoverState, String> {
     logger::log_file("CMD disable_auto_failover");
 
-    // Lecture de l'état sous verrou, puis libération avant toute I/O réseau.
+    // Désactivation et lecture de la bascule sous le MÊME verrou d'écriture.
+    // Le monitor vérifie `enabled` sous ce verrou avant de publier une bascule
+    // (voir monitor.rs): une bascule en cours d'application est donc soit vue
+    // ici et restaurée, soit annulée par le monitor. Le verrou est relâché
+    // avant toute I/O réseau.
     let (was_failed_over, primary_idx, secondary_idx) = {
-        let monitor = state.monitor_state.read().await;
+        let mut monitor = state.monitor_state.write().await;
+        let was = monitor.failover.is_failed_over;
+        monitor.failover.config.enabled = false;
+        monitor.failover.is_failed_over = false;
         (
-            monitor.failover.is_failed_over,
+            was,
             monitor.failover.config.primary_index,
             monitor.failover.config.secondary_index,
         )
@@ -297,8 +304,6 @@ async fn disable_auto_failover(state: tauri::State<'_, AppState>) -> Result<Fail
     }
 
     let mut monitor = state.monitor_state.write().await;
-    monitor.failover.config.enabled = false;
-    monitor.failover.is_failed_over = false;
     if let Some(e) = restore_error {
         monitor.failover.last_switch = format!(
             "{} | WARN failover desactive mais metriques non restaurees: {e}",
@@ -422,6 +427,38 @@ async fn save_settings(
     Ok(new_settings)
 }
 
+/// Rétablit les métriques nominales (primaire=10, secondaire=100) si un
+/// failover est actif. Appelé à la sortie de l'app.
+async fn restore_nominal_metrics_if_failed_over(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let (failed_over, primary_idx, secondary_idx) = {
+        let monitor = state.monitor_state.read().await;
+        (
+            monitor.failover.is_failed_over,
+            monitor.failover.config.primary_index,
+            monitor.failover.config.secondary_index,
+        )
+    };
+    if !failed_over {
+        return;
+    }
+
+    let result = blocking(move || {
+        network::set_routing_metric(primary_idx, network::METRIC_PRIMARY)
+            .map_err(|e| format!("{e:#}"))?;
+        network::set_routing_metric(secondary_idx, network::METRIC_SECONDARY)
+            .map_err(|e| format!("{e:#}"))
+    })
+    .await;
+
+    match result {
+        Ok(()) => logger::log_file("CMD quit: métriques nominales restaurées"),
+        Err(e) => logger::log_file(&format!(
+            "ERROR CMD quit: restauration des métriques impossible: {e}"
+        )),
+    }
+}
+
 // ─── App Entry ────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -521,10 +558,17 @@ pub fn run() {
                         }
                     }
                     "quit" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.destroy();
-                        }
-                        app.exit(0);
+                        // Les métriques nominales sont rétablies AVANT la sortie: un
+                        // failover actif laisserait sinon le secondaire prioritaire
+                        // après la fermeture de l'app.
+                        let app_handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            restore_nominal_metrics_if_failed_over(&app_handle).await;
+                            if let Some(w) = app_handle.get_webview_window("main") {
+                                let _ = w.destroy();
+                            }
+                            app_handle.exit(0);
+                        });
                     }
                     _ => {}
                 })
