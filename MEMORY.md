@@ -173,7 +173,7 @@ cd dualink && npm run tauri:build
 - **Single instance**: ✅ Plugin `tauri-plugin-single-instance`, focuses main window on 2nd launch
 - **Log viewer**: ✅ Onglet Logs avec viewer scrollable, auto-refresh 3s, coloration par type, sélecteur date
 - **Quality gates**: ✅ `cargo check` / `clippy -D warnings` / `fmt --check` / 22 unit tests — all clean, CI gates on clippy
-- **Version**: 1.2.3 en préparation — dernière release publiée : v1.2.2
+- **Version**: v1.2.3 publiée le 2026-10-14 (tag et release GitHub; artefacts NSIS, MSI et ZIP portable).
 - **Icons**: ✅ Refaits: deux anneaux entrelacés (« dual links ») en dégradé cyan→violet. `icon.png` 512², `icon.ico` 9 tailles (16→256), `tray-icon.png` 32². Générés par `tools/gen_icons.py` (Pillow), version 1.1.0 du marque
 - **Version affichée**: pastille `v1.2.3` dans l'en-tête, alimentée par la commande `get_app_version` (`CARGO_PKG_VERSION`) — jamais codée en dur dans le JS
 - **GitHub**: ✅ Public repo https://github.com/Endymi0n74/DualLink — v1.1.0 released
@@ -183,7 +183,7 @@ cd dualink && npm run tauri:build
 
 ## 📊 Current Status (2026-10-14)
 - **Build**: ✅ `cargo check`, `clippy -D warnings`, `fmt --check` et 27 tests unitaires propres
-- **Version**: 1.2.2 (dernière release publiée; statut de v1.2.3 suivi ci-dessous).
+- **Version**: v1.2.3 (dernière release publiée; détails ci-dessous).
 - **Failover**: ✅ Oscillation supprimée — le primaire est testé via une route hôte `/32` épinglée, pas via la route par défaut
 - **Métriques**: ✅ `-AutomaticMetric Disabled` appliqué (sinon Windows ignorait `-InterfaceMetric`)
 - **Forwarding**: ✅ Supprimé (la machine ne se comporte plus en routeur)
@@ -204,7 +204,7 @@ cd dualink && npm run tauri:build
 - README FR/EN et badges version mis à jour.
 - Vérifications locales : frontend build, `cargo fmt --check`, `cargo check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (27/27) et build Tauri release Windows réussis.
 - Artefacts générés : NSIS 2,21 Mio et MSI 3,29 Mio. Le ZIP portable est généré par le workflow CI.
-- Publication GitHub à confirmer après push du tag et succès du workflow.
+- Publication GitHub confirmée : [release v1.2.3](https://github.com/Endymi0n74/DualLink/releases/tag/v1.2.3), workflow CI réussi et trois artefacts téléchargeables.
 
 ## 🔧 Session de revue (non commitée)
 - **Course failover / désactivation**: ✅ `disable_auto_failover` passe `enabled=false` et lit `is_failed_over` sous le MÊME verrou d'écriture; le monitor revérifie `enabled` sous verrou avant de publier une bascule et, si désactivé pendant l'application, remet les métriques nominales (sinon métriques permutées sans rien pour les restaurer)
