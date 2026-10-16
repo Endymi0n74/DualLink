@@ -17,6 +17,27 @@ pub const METRIC_PRIMARY: u32 = 10;
 /// Métrique appliquée au secondaire en fonctionnement nominal.
 pub const METRIC_SECONDARY: u32 = 100;
 
+/// État renvoyé par `Get-NetAdapter` pour un adaptateur désactivé par
+/// l'administrateur (distinct de « Disconnected », qui est activé mais sans
+/// lien): c'est l'état que prend le partage USB du téléphone quand il a été
+/// coupé, et le seul que le montage automatique doit rallumer.
+pub const STATUS_DISABLED: &str = "Disabled";
+
+/// Fragments (minuscules) identifiant l'adaptateur de partage USB d'un
+/// téléphone. Windows l'expose via le pilote RNDIS, décrit « Remote NDIS
+/// based Internet Sharing Device » (FR: « ... basé sur NDIS distant »); le
+/// nom convivial peut être la marque du téléphone (Android, iPhone).
+const USB_TETHER_MARKERS: &[&str] = &[
+    "rndis",
+    "ndis",
+    "tethering",
+    "internet sharing device",
+    "partage internet",
+    "apple mobile device ethernet",
+    "android",
+    "iphone",
+];
+
 /// Run a command that never shows a console window on Windows
 fn run_hidden_command(cmd: &str, args: &[&str]) -> Result<std::process::Output> {
     let mut command = Command::new(cmd);
@@ -600,6 +621,17 @@ pub fn list_adapters() -> Result<Vec<NetworkAdapter>> {
     Ok(adapters)
 }
 
+/// Vrai si l'adaptateur est un partage de connexion USB de téléphone.
+///
+/// Le test porte sur le nom ET la description, insensible à la casse, car le
+/// libellé localisé de Windows ne contient pas toujours « NDIS ».
+pub fn is_usb_tethering(name: &str, description: &str) -> bool {
+    let haystack = format!("{name} {description}").to_lowercase();
+    USB_TETHER_MARKERS
+        .iter()
+        .any(|marker| haystack.contains(marker))
+}
+
 /// Enable a network adapter by name
 pub fn enable_adapter(name: &str) -> Result<()> {
     set_adapter_enabled(name, true)
@@ -998,6 +1030,37 @@ mod tests {
         assert_eq!(prefix_to_mask(32), "255.255.255.255");
         assert_eq!(prefix_to_mask(0), "0.0.0.0");
         assert_eq!(prefix_to_mask(33), "N/A");
+    }
+
+    #[test]
+    fn detecte_le_partage_usb_du_telephone() {
+        // RNDIS Windows (EN).
+        assert!(is_usb_tethering(
+            "Ethernet 3",
+            "Remote NDIS based Internet Sharing Device"
+        ));
+        // RNDIS Windows (FR, description localisée).
+        assert!(is_usb_tethering(
+            "Ethernet",
+            "Périphérique de partage Internet basé sur NDIS distant"
+        ));
+        // Nom convivial = marque du téléphone.
+        assert!(is_usb_tethering("Android", "Android USB Ethernet/RNDIS"));
+        assert!(is_usb_tethering("iPhone", "Apple Mobile Device Ethernet"));
+    }
+
+    #[test]
+    fn ne_detecte_pas_une_carte_reseau_normale() {
+        assert!(!is_usb_tethering("Wi-Fi", "Intel(R) Wi-Fi 6 AX201 160MHz"));
+        assert!(!is_usb_tethering(
+            "Ethernet",
+            "Realtek PCIe GbE Family Controller"
+        ));
+        assert!(!is_usb_tethering(
+            "vEthernet (Default Switch)",
+            "Hyper-V Virtual Ethernet Adapter"
+        ));
+        assert!(!is_usb_tethering("", ""));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use crate::logger;
 use crate::network;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
@@ -299,6 +300,32 @@ fn probe_primary(target: &str, config: &FailoverConfig) -> Option<bool> {
 
 // ─── Boucle de monitoring ─────────────────────────────────────────
 
+/// Sélectionne les adaptateurs de partage USB du téléphone à activer.
+///
+/// Politique: uniquement ceux administravely désactivés — un adaptateur déjà
+/// monté (« Up »/« Disconnected ») est laissé tel quel. `attempted` mémorise
+/// les noms déjà tentés pour ne pas relancer PowerShell à chaque tick; un nom
+/// est oublié dès que l'adaptateur quitte l'état désactivé, donc un
+/// débranchement/rebranchement du téléphone déclenche une nouvelle tentative.
+fn tethering_to_enable(
+    adapters: &[network::NetworkAdapter],
+    attempted: &mut HashSet<String>,
+) -> Vec<String> {
+    let disabled: Vec<String> = adapters
+        .iter()
+        .filter(|a| a.status == network::STATUS_DISABLED)
+        .filter(|a| network::is_usb_tethering(&a.name, &a.description))
+        .map(|a| a.name.clone())
+        .collect();
+
+    attempted.retain(|name| disabled.contains(name));
+
+    disabled
+        .into_iter()
+        .filter(|name| attempted.insert(name.clone()))
+        .collect()
+}
+
 pub fn start_monitor(
     app_handle: tauri::AppHandle,
     state: Arc<RwLock<MonitorState>>,
@@ -313,6 +340,7 @@ pub fn start_monitor(
         let mut cached_statuses: Vec<AdapterStatus> = Vec::new();
         let mut counters = FailoverCounters::default();
         let mut last_failover_enabled = false;
+        let mut tether_attempted: HashSet<String> = HashSet::new();
 
         loop {
             tick_count += 1;
@@ -416,6 +444,37 @@ pub fn start_monitor(
                     adapters.len()
                 ));
                 cached_adapters = adapters;
+            }
+
+            // ── Partage USB: montage automatique du téléphone ──
+            // Décidé sur la liste fraîche (un adaptateur tout juste apparu ne
+            // doit pas attendre le prochain refresh). L'activation est un appel
+            // PowerShell: exécutée hors du runtime async.
+            let to_enable = tethering_to_enable(&cached_adapters, &mut tether_attempted);
+
+            if !to_enable.is_empty() {
+                let enabled = tokio::task::spawn_blocking(move || {
+                    let mut names = Vec::new();
+                    for name in to_enable {
+                        match network::enable_adapter(&name) {
+                            Ok(()) => names.push(name),
+                            Err(e) => logger::log_file(&format!(
+                                "WARN montage auto partage USB '{name}': {e:#}"
+                            )),
+                        }
+                    }
+                    names
+                })
+                .await
+                .unwrap_or_default();
+
+                for name in &enabled {
+                    logger::log_file(&format!("USB TETHERING: '{name}' activé automatiquement"));
+                }
+
+                if !enabled.is_empty() {
+                    let _ = app_handle.emit("tethering-auto-enabled", &enabled);
+                }
             }
 
             // Le dernier statut connu est conservé entre deux rafraîchissements.
@@ -855,5 +914,69 @@ mod tests {
         }
         .validated();
         assert_eq!(injectable.ping_target, network::DEFAULT_PING_TARGET);
+    }
+
+    fn adapter(name: &str, description: &str, status: &str) -> network::NetworkAdapter {
+        network::NetworkAdapter {
+            name: name.to_string(),
+            interface_index: 0,
+            status: status.to_string(),
+            mac_address: "N/A".to_string(),
+            speed: "N/A".to_string(),
+            description: description.to_string(),
+            is_connected: status == "Up",
+        }
+    }
+
+    #[test]
+    fn monte_le_partage_usb_desactive_seulement() {
+        let mut attempted = HashSet::new();
+        let adapters = vec![
+            adapter("Wi-Fi", "Intel(R) Wi-Fi 6 AX201", "Up"),
+            adapter(
+                "Ethernet 2",
+                "Remote NDIS based Internet Sharing Device",
+                "Disabled",
+            ),
+            // Activé mais sans lien: rien à monter.
+            adapter(
+                "Ethernet 3",
+                "Remote NDIS based Internet Sharing Device",
+                "Disconnected",
+            ),
+        ];
+
+        assert_eq!(
+            tethering_to_enable(&adapters, &mut attempted),
+            vec!["Ethernet 2"]
+        );
+
+        // Déjà tenté et toujours désactivé: pas de nouvelle tentative au tick
+        // suivant (évite de relancer PowerShell et de relogger).
+        assert!(tethering_to_enable(&adapters, &mut attempted).is_empty());
+    }
+
+    #[test]
+    fn retente_le_montage_apres_rebranchement() {
+        let mut attempted = HashSet::new();
+        let disabled = vec![adapter(
+            "Ethernet 2",
+            "Remote NDIS based Internet Sharing Device",
+            "Disabled",
+        )];
+
+        assert_eq!(
+            tethering_to_enable(&disabled, &mut attempted),
+            vec!["Ethernet 2"]
+        );
+
+        // Téléphone débranché: l'adaptateur disparaît, le nom est oublié.
+        assert!(tethering_to_enable(&[], &mut attempted).is_empty());
+
+        // Rebranché désactivé: nouvelle tentative.
+        assert_eq!(
+            tethering_to_enable(&disabled, &mut attempted),
+            vec!["Ethernet 2"]
+        );
     }
 }

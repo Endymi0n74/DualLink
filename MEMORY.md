@@ -49,7 +49,7 @@ Rule 7: Use the body to explain what and why vs. how. Assume the code explains t
 
 ## 🎯 Project Overview
 **DualLink** is a Windows network adapter manager built with **Tauri 2** (Rust backend + vanilla JS frontend).
-Purpose: allow the user to toggle network adapters ON/OFF and mutualize them (load balancing or failover) for sharing a phone tethering connection alongside a slow Freebox ADSL.
+Purpose: allow the user to toggle network adapters ON/OFF and mutualize them (load balancing or failover) for sharing a phone tethering connection alongside a slow Freebox ADSL. Plugging the phone auto-enables its USB sharing adapter (RNDIS) with no click.
 
 ## 📁 Project Structure
 ```
@@ -139,6 +139,8 @@ cd dualink && npm run tauri:build
 28. **Le bouton X laisse croire a un plantage** — comportement voulu depuis le debut (fenetre masquee, seul « Quitter » du menu tray arrete), mais l'utilisateur cherche l'app dans la barre des taches, ne la trouve pas et conclut au crash. Fixed: au **premier** clic X, un toast violet explique ou se trouve l'icone et comment quitter; la fenetre se cache 4s plus tard (1,5s etait illisible). Les clics suivants masquent directement.
 29. **Manifeste UAC ignoré : l'exe tournait sans élévation** — Le manifeste `requireAdministrator` n'a **jamais** été effectif : `embed-resource` + `app.rc` étaient écrasés par le manifeste par défaut de tauri-build (Common-Controls v6 seul, aucune `requestedExecutionLevel`), et `let _ =` masquait toute erreur d'embarquement. L'exe démarrait en `asInvoker` sans invite UAC (jeton filtré, `TokenElevation = 0`) : chaque `Disable-NetAdapter` échouait en « Accès refusé » / System Error 5, et la sortie PowerShell cp850 décodée en UTF-8 ajoutait du mojibak (« Acce□s refus□ »). La « session UAC refus uniquement » soupçonnée dans la section Limite était un contresens : aucune élévation n'était demandée. Fixed : `build.rs` appelle `tauri_build::try_build(Attributes::new().windows_attributes(WindowsAttributes::new().app_manifest(include_str!("app.manifest"))))`, `app.manifest` enrichi de la dépendance Common-Controls v6 (styles natifs préservés), `embed-resource`/`app.rc` supprimés. Les builds **release uniquement** portent l'élévation : un binaire de test/debug avec `requireAdministrator` refuse de démarrer hors shell élevé (os error 14001 / Permission denied), donc debug/test gardent le manifeste par défaut (`PROFILE == "release"` dans build.rs). Détection côté app : `network::is_elevated()` (TokenElevation via FFI, sans crate) vérifié avant chaque bascule → message actionnable au lieu d'une sortie PowerShell tronquée ; état tracé au démarrage (`Elevated: true/false`). Vérifié par inspection de la ressource RT_MANIFEST id 1 : `level=requireAdministrator`, fichier embarqué verbatim. **Piège SxS (bis, os error 14001)** : la première version corrigée refusait de démarrer (« configuration côte-à-côte incorrecte »). Deux fausses pistes éliminées avant la vraie cause, trouvée dans le **journal Événements Applications → source SideBySide, event 79** (l'outil de diagnostic recommandé par le message d'erreur lui-même — `sxstrace` exige une console interactive, inutilisable hors TTY) : « Le paramètre ...^dpiAware n'est pas inscrit ». **Chaque paramètre de windowsSettings doit être dans SON espace de noms enregistré : `dpiAware` → SMI/2005, `dpiAwareness` → SMI/2016** (pas 2011). Tout autre couplage fait rejeter tout le manifeste par CreateActCtx. Second piège avéré en chemin : tauri-winres, via `WindowsAttributes::app_manifest`, insère le manifeste dans un **bloc de chaînes rc** (`" {ligne} "` concaténées) — espaces ajoutés, accents convertis en `?` ; d'où l'inclusion verbatim du fichier via `new_without_app_manifest()` + `append_rc_content("1 24 \"app.manifest\"")` + `rerun-if-changed` déclaré à la main. Tests de non-régression : (1) `cmd /c exe` doit renvoyer 740 (privilège) ou 0 (démarré), **jamais 14001** ; (2) le log doit afficher `Elevated: true` au démarrage.
 
+30. **Montage automatique du partage USB** (fonctionnalité v1.3.0) — Brancher le téléphone devait suffire à monter son partage USB, sans clic. Détection de l'adaptateur RNDIS via `network::is_usb_tethering(name, description)` (marqueurs FR/EN, insensible à la casse) et activation automatique dans la boucle du monitor dès que son état est `Disabled` (`STATUS_DISABLED`). Aucun processus supplémentaire: la détection réutilise le `list_adapters` déjà appelé au rythme du refresh; l'`Enable-NetAdapter` n'est lancé que lorsqu'un adaptateur désactivé apparaît. Garde anti-repétition (`tethering_to_enable` + `HashSet` des noms tentés): pas de relance PowerShell ni de WARN en boucle tant que l'adaptateur reste désactivé; le nom est oublié dès qu'il quitte l'état, donc un débranchement/rebranchement retente. Un adaptateur déjà monté (`Up`/`Disconnected`) est laissé tel quel. Événement `tethering-auto-enabled` → toast côté UI. **NE PAS REVERTIR.**
+
 ## 🧩 Architecture Decisions
 - **No framework**: vanilla JS (no React/Vue) — lightweight, fast
 - **CSS minified inline**: single `styles.css` with glassmorphism theme
@@ -198,6 +200,18 @@ cd dualink && npm run tauri:build
 - **Testé sur cette machine**: Wi-Fi passe vert (17 ms), `disable_adapter` coupe réellement VMnet1 (vérifié: status `Disabled`), toast « masqué dans le tray » lisible avant fermeture (4s validé à l'usage); exe release 1.2.2 reconstruit depuis le tag et relancé: `Elevated: true`, zéro événement SideBySide (non-régression #29)
 - **Limite**: Toute action nécessitant l'élévation échoue si le processus ne l'est pas. Depuis le fix #29, un lancement normal déclenche l'invite UAC; si un contexte lance l'exe sans élévation, l'app le détecte (`network::is_elevated()`, log `Elevated: false`) et renvoie un message clair (« Droits administrateur manquants… ») au lieu d'une sortie PowerShell. Le repli `ping -S` masque encore ce cas pour l'affichage des sondes.
 
+## 📊 Current Status (2026-10-16)
+- **Version**: v1.3.0 — montage automatique du partage USB du téléphone.
+- **Fonctionnalité**: ✅ Adaptateur RNDIS détecté et activé seul quand le téléphone est branché (toujours actif, aucun réglage). Toast UI à l'activation.
+- **Tests**: ✅ 31 unitaires (`cargo test`), dont 4 nouveaux: détection RNDIS EN/FR + marques, non-détection d'une carte normale, sélection/anti-repétition, retente après rebranchement.
+- **Garde-fous**: ✅ `cargo fmt --check`, `cargo check`, `cargo clippy --all-targets -- -D warnings` propres; frontend `vite build` OK.
+- **Périmètre**: aucun processus en plus en régime normal (réutilise `list_adapters`); `Enable-NetAdapter` uniquement quand un adaptateur désactivé apparaît.
+
+## 📦 Release v1.3.0 (2026-10-16)
+- Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badges README FR/EN.
+- Nouvelle fonctionnalité: montage automatique du partage USB (RNDIS) au branchement du téléphone.
+- README FR/EN: ligne « Montage USB auto » ajoutée.
+
 ## 📦 Release v1.2.3 (2026-10-14)
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json` et `app.manifest`.
 - Corrections failover : restauration des métriques nominales lors de la désactivation pendant la bascule et à la fermeture via le menu Quitter.
@@ -244,6 +258,14 @@ cd dualink && npm run tauri:build
 - **MonitorState.failover** field carries the state to frontend via `monitoring-update` event
 - **UI**: `.failover-banner` shows standby/active status with switch count and disable button
 - **CSS**: `.failover-standby` (green tint), `.failover-active` (orange tint + pulse animation)
+
+## 📱 Montage automatique du partage USB
+- **Détection** (`network.rs`): `is_usb_tethering(name, description)` — vrai si le nom OU la description contient un marqueur `USB_TETHER_MARKERS` (rndis, ndis, tethering, internet sharing device, partage internet, apple mobile device ethernet, android, iphone), en minuscules. Couvre RNDIS EN/FR et les noms conviviaux de marque.
+- **État ciblé**: `STATUS_DISABLED` (« Disabled »). Un adaptateur activé mais sans lien (« Disconnected ») ou déjà monté (« Up ») n'est jamais touché.
+- **Décision** (`monitor.rs`): `tethering_to_enable(adapters, attempted)` — pure, testée. `attempted` (HashSet local à la boucle) empêche de retenter un nom tant qu'il reste désactivé; un nom quitte l'ensemble dès qu'il n'est plus dans l'état désactivé.
+- **Exécution**: dans la boucle du monitor, sur la liste fraîche (au rythme du refresh adapters), via `spawn_blocking` → `network::enable_adapter`. Zéro processus en plus en régime normal.
+- **UI**: événement Tauri `tethering-auto-enabled` (payload = noms activés) écouté par `app.js` → `showToast('📱 Partage USB monté : ...')`.
+- **Pas de réglage**: comportement toujours actif (choix utilisateur).
 
 ## 📊 Dashboard Monitoring (ui.js)
 - **Canvas**: 500×120 logical px, DPR-aware, drawn via `drawDashboardCanvas()`

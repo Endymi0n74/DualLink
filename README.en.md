@@ -2,7 +2,7 @@
 
 **Windows network card manager** — Share and pool your internet connections (phone + Box, for example) with smart automatic failover.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.2.3-brightgreen)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.3.0-brightgreen)
 
 [🇫🇷 Français](README.md) · **🇬🇧 English**
 
@@ -25,6 +25,7 @@ Do you have a sluggish **ADSL Box** and a **shared phone connection**? DualLink 
 | Feature | Description |
 |---------|-------------|
 | 🔌 **Toggle adapters** | Enable/disable your network adapters in one click |
+| 📱 **USB auto-mount** | Plugging the phone enables its USB sharing adapter (RNDIS) with no click |
 | ⚖️ **Load Balancing** | Dynamic metrics to spread traffic |
 | 🛡️ **Failover auto** | Loss detection (2 failures) → switch. Recovery (3 successes) → switch back |
 | 📊 **Real-time dashboard** | Canvas latency chart, min/max/average stats, history of 10 measurements |

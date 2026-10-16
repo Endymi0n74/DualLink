@@ -2,7 +2,7 @@
 
 **Gestionnaire de cartes réseau Windows** — Partagez et mutualisez vos connexions internet (téléphone + Box par exemple) avec un failover automatique intelligent.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.2.3-brightgreen)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.3.0-brightgreen)
 
 **🇫🇷 Français** · [🇬🇧 English](README.en.md)
 
@@ -25,6 +25,7 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 | Feature | Description |
 |---------|-------------|
 | 🔌 **Toggle adapters** | Activez/désactivez vos cartes réseau en un clic |
+| 📱 **Montage USB auto** | Brancher le téléphone monte tout seul son partage USB (RNDIS), sans clic |
 | ⚖️ **Load Balancing** | Métriques dynamiques pour répartir le trafic |
 | 🛡️ **Failover auto** | Détection de perte (2 échecs) → bascule. Restauration (3 succès) → retour |
 | 📊 **Dashboard temps réel** | Graphique canvas de latence, stats min/max/moyenne, historique 10 mesures |

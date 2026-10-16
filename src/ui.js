@@ -678,7 +678,7 @@ export function updateMonitorState(state) {
   drawDashboardCanvas();
 }
 
-function showToast(message, type) {
+export function showToast(message, type) {
   type = type || 'info';
   const container = document.getElementById('toasts');
   if (!container) return;
