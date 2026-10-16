@@ -211,6 +211,8 @@ cd dualink && npm run tauri:build
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badges README FR/EN.
 - Nouvelle fonctionnalité: montage automatique du partage USB (RNDIS) au branchement du téléphone.
 - README FR/EN: ligne « Montage USB auto » ajoutée.
+- Artefacts locaux vérifiés : `duallink.exe` release, MSI 3,29 Mio et NSIS 2,21 Mio pour 1.3.0.
+- Publication GitHub confirmée : [release v1.3.0](https://github.com/Endymi0n74/DualLink/releases/tag/v1.3.0), CI réussie, trois artefacts (NSIS, MSI, ZIP portable).
 
 ## 📦 Release v1.2.3 (2026-10-14)
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json` et `app.manifest`.
