@@ -239,6 +239,7 @@ cd dualink && npm run tauri:build
 - Délais maximaux sur tous les processus lancés (PowerShell 20 s, ping/route 10 s, adb 15 s): `Command::output()` attendait indéfiniment et pouvait geler le monitor.
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badge README.
 - Vérifications: 41 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run build`, build release Windows, cycle branchement testé sur POCO X7 (partage activé, ping 0 % de perte).
+- README FR et EN remis à niveau (v1.3.2): section « Partage USB du téléphone (ADB) » avec prérequis et limites, section « Monitoring », onglets Interface et Logs à jour.
 - Publication GitHub confirmée : [release v1.3.2](https://github.com/Endymi0n74/DualLink/releases/tag/v1.3.2), CI réussie (run 39487390914), trois artefacts : NSIS 2,35 Mio, MSI 3,51 Mio, ZIP portable 3,10 Mio. Notes de release détaillées (prérequis ADB, limites).
 
 ## 📦 Release v1.3.1 (2026-10-20)

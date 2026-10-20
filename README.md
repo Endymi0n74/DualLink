@@ -31,7 +31,7 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 | 📊 **Dashboard temps réel** | Graphique canvas de latence, stats min/max/moyenne, historique 10 mesures |
 | 🔬 **Mode Expert** | IP, masque, passerelle, DNS, DHCP, métrique routing par adapter |
 | ⚙️ **Settings configurables** | Intervalle ping, cible IP, refresh adapters — persistés en JSON |
-| 📋 **Log viewer** | Onglet logs avec auto-refresh, coloration par type, sélecteur date |
+| 📋 **Log viewer** | Onglet logs interrogé toutes les 10 s, rendu uniquement si le fichier a grossi, coloration par type, sélecteur date |
 | 🔲 **System tray** | Minimise dans la barre des tâches au lieu de fermer |
 | 🔒 **Admin auto** | Demande les droits admin au lancement (UAC) |
 | 🚫 **Zero fenêtres** | Aucune fenêtre PowerShell visible — tout est en arrière-plan |
@@ -57,7 +57,9 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 - Sauvegarder / Rétablir défauts
 
 ### Onglet Logs
-- Viewer scrollable avec auto-refresh
+- Viewer scrollable, interrogé toutes les 10 s et repeint uniquement si le
+  fichier a grossi
+- Position de lecture conservée quand de nouvelles lignes arrivent
 - Coloration : 🔴 ERROR, 🟠 FAILOVER, 🔵 CMD, 🟢 Monitor
 - Sélecteur de date
 
@@ -100,9 +102,9 @@ apparaître seule.
   autorisée (clé RSA acceptée sur le téléphone).
 
 **Ce que fait l'application**
-- Vérifie `adb devices` toutes les 10 à 20 s.
-- Si un téléphone autorisé est branché et qu'aucune carte RNDIS n'existe,
-  exécute `adb shell svc usb setFunctions rndis`.
+- Vérifie `adb devices` toutes les 10 s.
+- Si un téléphone autorisé est branché et que sa fonction USB n'est pas
+  `rndis`, exécute `adb shell svc usb setFunctions rndis`.
 - Le partage démarre côté téléphone (`rndis0 - TetheredState`), Windows obtient
   une carte réseau utilisable comme secondaire du failover.
 
@@ -129,6 +131,23 @@ Internet UP   → 3 succès consécutifs (15s) → Restaure primary
 - Banner UI avec statut standby/actif + bouton désactiver
 - Lock libéré avant appels réseau — pas de blocage du monitor
 - Désactivation pendant une bascule et fermeture de l'application : métriques nominales rétablies
+
+---
+
+## 📈 Monitoring
+
+- **Statut stable** : deux échecs consécutifs pour afficher « Déconnecté », un
+  succès pour revenir. Avant la première mesure, l'en-tête affiche
+  « Vérification… » au lieu d'un « Déconnecté » faux.
+- **Cible par défaut `1.1.1.1`** : `8.8.8.8` perdait jusqu'à 100 % des
+  paquets sur certaines lignes, ce qui faisait clignoter le badge alors que la
+  carte répondait.
+- **Seules les vraies cartes sont sondées** : les cartes virtuelles (Hyper-V,
+  VMware, VPN) n'ont pas de passerelle à tester, elles affichent « État
+  inconnu » plutôt qu'un faux « Déconnecté ».
+- **Tous les processus lancés ont un délai maximal** (PowerShell 20 s,
+  ping/route 10 s, adb 15 s) : une commande bloquée ne peut plus geler le
+  monitor.
 
 ---
 
