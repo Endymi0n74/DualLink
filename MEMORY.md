@@ -234,6 +234,12 @@ cd dualink && npm run tauri:build
 - **Réglages**: `usb_tether_auto` (défaut vrai) et `adb_path` (vide = détection). Bouton « Partage USB », « Tester ADB », « Écran de partage » dans l'UI.
 - **Tests**: 41 unitaires (parsing `adb devices`, choix de l'appareil, détection RNDIS, réglages ADB, backward compatible du `settings.json`).
 
+## 📦 Release v1.3.2 (2026-10-20)
+- Partage USB du téléphone piloté par ADB: au branchement, la fonction USB du téléphone passe en `rndis` (10 s) et la carte RNDIS apparaît seule.
+- Délais maximaux sur tous les processus lancés (PowerShell 20 s, ping/route 10 s, adb 15 s): `Command::output()` attendait indéfiniment et pouvait geler le monitor.
+- Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badge README.
+- Vérifications: 41 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run build`, build release Windows, cycle branchement testé sur POCO X7 (partage activé, ping 0 % de perte).
+
 ## 📦 Release v1.3.1 (2026-10-20)
 - Retrait du montage USB automatique: Android seul décide d'exposer une carte RNDIS, le PC ne peut pas déclencher le partage.
 - Cible de connectivité par défaut passée à `1.1.1.1`: `8.8.8.8` perdait 50 à 100 % des paquets sur la ligne testée et faisait clignoter le badge.
