@@ -19,6 +19,12 @@ async function init() {
   listen('hide-to-tray-notice', () => {
     showTrayHint();
   });
+
+  // Le monitor a basculé la fonction USB du téléphone en `rndis`: sa carte
+  // réseau apparaît dans la liste des interfaces.
+  listen('usb-tethering-armed', (event) => {
+    showToast('📱 Partage USB activé sur ' + (event.payload || 'le téléphone'), 'success');
+  });
 }
 
 init();

@@ -52,8 +52,20 @@ export async function getSettings() {
   return invoke('get_settings');
 }
 
-export async function saveSettings(intervalSecs, pingTarget, adapterRefreshSecs) {
-  return invoke('save_settings', { intervalSecs, pingTarget, adapterRefreshSecs });
+export async function saveSettings(intervalSecs, pingTarget, adapterRefreshSecs, usbTetherAuto, adbPath) {
+  return invoke('save_settings', { intervalSecs, pingTarget, adapterRefreshSecs, usbTetherAuto, adbPath });
+}
+
+export async function armUsbTethering() {
+  return invoke('arm_usb_tethering');
+}
+
+export async function openTetheringScreen() {
+  return invoke('open_tethering_screen');
+}
+
+export async function adbStatus() {
+  return invoke('adb_status');
 }
 
 export async function getLogs() {

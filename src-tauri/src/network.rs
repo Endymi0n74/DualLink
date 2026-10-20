@@ -21,18 +21,54 @@ pub const METRIC_PRIMARY: u32 = 10;
 /// Métrique appliquée au secondaire en fonctionnement nominal.
 pub const METRIC_SECONDARY: u32 = 100;
 
+/// Délai maximal d'une commande PowerShell.
+const POWERSHELL_TIMEOUT_SECS: u64 = 20;
+
+/// Délai maximal d'un `ping.exe` ou d'un `route.exe`.
+const NET_TOOL_TIMEOUT_SECS: u64 = 10;
+
 /// Run a command that never shows a console window on Windows
-fn run_hidden_command(cmd: &str, args: &[&str]) -> Result<std::process::Output> {
+///
+/// `Command::output()` attend indéfiniment: un `ping.exe` vers une interface
+/// disparue, ou `Get-NetAdapter` pendant une ré-enumération USB, bloque le
+/// monitor jusqu'à la fin des temps. Le processus est tué au-delà du délai.
+fn run_hidden_command(cmd: &str, args: &[&str], timeout_secs: u64) -> Result<std::process::Output> {
     let mut command = Command::new(cmd);
-    command.args(args);
+    command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    command
-        .output()
-        .context(format!("Failed to execute {}", cmd))
+
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("Failed to execute {}", cmd))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    // Le processus est tué: on abandonne sa sortie plutôt que
+                    // d'attendre un `wait` qui ne reviendrait pas.
+                    anyhow::bail!("{}: délai dépassé ({}s)", cmd, timeout_secs);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(e).with_context(|| format!("Failed to execute {}", cmd)),
+        }
+    }
+
+    child
+        .wait_with_output()
+        .with_context(|| format!("Failed to execute {}", cmd))
 }
 
 /// Échappe une valeur destinée à une chaîne PowerShell entre apostrophes.
@@ -84,6 +120,7 @@ fn run_powershell(script: &str) -> Result<String> {
     let output = run_hidden_command(
         "powershell.exe",
         &["-NoProfile", "-NonInteractive", "-Command", script],
+        POWERSHELL_TIMEOUT_SECS,
     )?;
 
     if !output.status.success() {
@@ -281,7 +318,7 @@ fn ping_host(host: &str, timeout_ms: u32, source_ip: Option<&str>) -> Result<Con
     }
     args.push(host);
 
-    let output = run_hidden_command("ping.exe", &args)?;
+    let output = run_hidden_command("ping.exe", &args, NET_TOOL_TIMEOUT_SECS)?;
     Ok(parse_ping_result(
         &String::from_utf8_lossy(&output.stdout),
         output.status.success(),
@@ -343,7 +380,7 @@ impl RouteTarget {
 /// Uniquement sur le code de sortie: la sortie de `route.exe` est localisée.
 fn run_route(args: &[String], context: &str) -> Result<()> {
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = run_hidden_command("route.exe", &borrowed)?;
+    let output = run_hidden_command("route.exe", &borrowed, NET_TOOL_TIMEOUT_SECS)?;
     if !output.status.success() {
         anyhow::bail!(
             "{context}: route.exe a échoué (code {})",

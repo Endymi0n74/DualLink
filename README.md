@@ -25,6 +25,7 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 | Feature | Description |
 |---------|-------------|
 | 🔌 **Toggle adapters** | Activez/désactivez vos cartes réseau en un clic |
+| 📱 **Partage USB (ADB)** | Branchez le téléphone : DualLink passe sa fonction USB en `rndis` (ADB), la carte apparaît seule |
 | ⚖️ **Load Balancing** | Métriques dynamiques pour répartir le trafic |
 | 🛡️ **Failover auto** | Détection de perte (2 échecs) → bascule. Restauration (3 succès) → retour |
 | 📊 **Dashboard temps réel** | Graphique canvas de latence, stats min/max/moyenne, historique 10 mesures |
@@ -46,11 +47,13 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 - Sélecteur de mode : Individuel / Load Balancing / Failover
 - Dashboard monitoring avec graphique canvas et stats live
 - Banner failover (standby/actif)
+- Bouton « Partage USB » : bascule la fonction USB du téléphone en `rndis`
 
 ### Onglet Settings
 - Intervalle de ping (1-300s)
 - Cible ping (IP ou hostname)
 - Refresh adapters (5-600s)
+- Partage USB automatique (ADB), chemin de `adb.exe`, test de l'état ADB
 - Sauvegarder / Rétablir défauts
 
 ### Onglet Logs
@@ -81,6 +84,35 @@ Téléchargez depuis les [Releases GitHub](https://github.com/Endymi0n74/DualLin
 > Si votre session Windows est en UAC « refus uniquement » pour votre compte,
 l'élévation peut échouer silencieusement. Lancez alors :
 > `Start-Process ".\duallink.exe" -Verb RunAs`
+
+---
+
+## 📱 Partage USB du téléphone (ADB)
+
+Brancher le téléphone suffit : DualLink bascule sa fonction USB en `rndis`,
+le téléphone démarre son partage et Windows voit une carte « Remote NDIS »
+apparaître seule.
+
+**Prérequis**
+- **Android Platform-Tools** (`adb`) sur le PC — détection automatique dans `PATH`,
+  winget et le SDK Android. Chemin forçable dans Settings.
+- Sur le téléphone : Options développeur → **Débogage USB** activé, et cette PC
+  autorisée (clé RSA acceptée sur le téléphone).
+
+**Ce que fait l'application**
+- Vérifie `adb devices` toutes les 10 à 20 s.
+- Si un téléphone autorisé est branché et qu'aucune carte RNDIS n'existe,
+  exécute `adb shell svc usb setFunctions rndis`.
+- Le partage démarre côté téléphone (`rndis0 - TetheredState`), Windows obtient
+  une carte réseau utilisable comme secondaire du failover.
+
+**Limites**
+- Le point d'accès Wi-Fi du téléphone ne s'allume pas à distance : Android
+  refuse la commande shell sur les builds grand public (HyperOS). Le bouton
+  « Écran de partage » ouvre l'écran du téléphone, l'utilisateur bascule
+  l'interrupteur.
+- Certains modèles coupent ADB au changement de fonction USB : il faut
+  rebrancher le câble.
 
 ---
 

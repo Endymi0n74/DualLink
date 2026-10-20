@@ -1,3 +1,4 @@
+mod adb;
 mod logger;
 mod monitor;
 mod network;
@@ -413,9 +414,11 @@ async fn save_settings(
     interval_secs: u64,
     ping_target: String,
     adapter_refresh_secs: u64,
+    usb_tether_auto: bool,
+    adb_path: String,
 ) -> Result<Settings, String> {
     logger::log_file(&format!(
-        "CMD save_settings: interval={interval_secs}s target={ping_target} refresh={adapter_refresh_secs}s"
+        "CMD save_settings: interval={interval_secs}s target={ping_target} refresh={adapter_refresh_secs}s usb_auto={usb_tether_auto}"
     ));
 
     // La validation est appliquée ici comme au chargement: `Settings::load`
@@ -425,6 +428,8 @@ async fn save_settings(
         interval_secs,
         ping_target: ping_target.clone(),
         adapter_refresh_secs,
+        usb_tether_auto,
+        adb_path,
     };
     let new_settings = requested.clone().validated();
 
@@ -442,6 +447,91 @@ async fn save_settings(
     let mut s = state.settings.write().await;
     *s = new_settings.clone();
     Ok(new_settings)
+}
+
+// ─── Partage USB du téléphone (ADB) ───────────────────────────────
+
+/// Un téléphone connu du serveur ADB.
+#[derive(serde::Serialize)]
+struct AdbDeviceInfo {
+    serial: String,
+    state: String,
+    ready: bool,
+}
+
+/// État de la chaîne ADB, pour l'écran de réglages.
+#[derive(serde::Serialize)]
+struct AdbStatus {
+    adb_path: Option<String>,
+    devices: Vec<AdbDeviceInfo>,
+}
+
+/// Active le partage USB du téléphone branché (fonction USB en `rndis`).
+///
+/// Renvoie un message lisible: l'UI l'affiche tel quel.
+#[tauri::command]
+async fn arm_usb_tethering(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    logger::log_file("CMD arm_usb_tethering");
+    let adb_path = state.settings.read().await.adb_path.clone();
+
+    let outcome = blocking(move || {
+        let mut client = adb::Adb::open(&adb_path)?;
+        Ok::<_, String>(client.check())
+    })
+    .await?;
+
+    let message = match outcome {
+        adb::Outcome::Present => "Partage USB déjà actif sur le téléphone".to_string(),
+        adb::Outcome::NoDevice => {
+            "Aucun téléphone autorisé: activez le débogage USB sur le téléphone".to_string()
+        }
+        adb::Outcome::Armed(serial) => format!("Partage USB activé sur {serial}"),
+        adb::Outcome::Failed(reason) => reason,
+    };
+
+    logger::log_file(&format!("CMD arm_usb_tethering: {message}"));
+    Ok(message)
+}
+
+/// Ouvre l'écran de partage de connexion sur le téléphone.
+///
+/// Le point d'accès Wi-Fi ne s'allume pas depuis le shell sur les builds
+/// grand public: on ouvre l'écran, l'utilisateur bascule l'interrupteur.
+#[tauri::command]
+async fn open_tethering_screen(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    logger::log_file("CMD open_tethering_screen");
+    let adb_path = state.settings.read().await.adb_path.clone();
+
+    blocking(move || adb::open_tethering_screen(&adb_path)).await?;
+
+    Ok("Écran de partage ouvert sur le téléphone".to_string())
+}
+
+/// État d'ADB: binaire trouvé, téléphones autorisés.
+#[tauri::command]
+async fn adb_status(state: tauri::State<'_, AppState>) -> Result<AdbStatus, String> {
+    let adb_path = state.settings.read().await.adb_path.clone();
+
+    blocking(move || {
+        let located = adb::locate(&adb_path);
+        let devices = match &located {
+            Some(path) => adb::list_devices(path).unwrap_or_default(),
+            None => Vec::new(),
+        };
+
+        Ok::<_, String>(AdbStatus {
+            adb_path: located.map(|path| path.to_string_lossy().to_string()),
+            devices: devices
+                .iter()
+                .map(|device| AdbDeviceInfo {
+                    serial: device.serial.clone(),
+                    state: device.state.clone(),
+                    ready: device.state == adb::STATE_READY,
+                })
+                .collect(),
+        })
+    })
+    .await
 }
 
 /// Rétablit les métriques nominales (primaire=10, secondaire=100) si un
@@ -539,6 +629,9 @@ pub fn run() {
             get_failover_state,
             get_settings,
             save_settings,
+            arm_usb_tethering,
+            open_tethering_screen,
+            adb_status,
             get_logs,
             get_logs_if_changed,
             get_app_version,

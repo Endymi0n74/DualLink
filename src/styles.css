@@ -126,6 +126,7 @@ body::after{width:350px;height:350px;background:radial-gradient(circle,var(--acc
 .settings-input{padding:8px 12px;background:rgba(0,0,0,.3);border:1px solid var(--glass-border);border-radius:8px;color:var(--text-primary);font-size:14px;font-family:inherit;width:100px;text-align:right;transition:border-color .25s}
 .settings-input:focus{outline:none;border-color:var(--accent-blue)}
 .settings-input-text{text-align:left;width:200px}
+.settings-check{width:auto;text-align:left;accent-color:var(--accent-blue)}
 .settings-unit{font-size:12px;color:var(--text-secondary)}
 .settings-hint{font-size:11px;color:var(--text-muted)}
 .settings-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}

@@ -1,6 +1,8 @@
+use crate::adb;
 use crate::logger;
 use crate::network;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
@@ -23,6 +25,12 @@ const MAX_INTERVAL_SECS: u64 = 300;
 const MIN_REFRESH_SECS: u64 = 5;
 const MAX_REFRESH_SECS: u64 = 600;
 
+/// Longueur maximale du chemin `adb.exe` enregistré.
+const MAX_ADB_PATH_LEN: usize = 260;
+
+/// Délai minimal entre deux tentatives de partage USB via ADB.
+const USB_TETHER_CHECK_SECS: u64 = 10;
+
 // ─── Settings ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +38,20 @@ pub struct Settings {
     pub interval_secs: u64,
     pub ping_target: String,
     pub adapter_refresh_secs: u64,
+    /// Partage USB du téléphone activé seul au branchement (via ADB).
+    ///
+    /// `#[serde(default)]` avec un défaut `true`: un `settings.json` écrit
+    /// avant cette option doit conserver le comportement attendu.
+    #[serde(default = "default_enabled")]
+    pub usb_tether_auto: bool,
+    /// Chemin de `adb.exe`. Vide: détection automatique (PATH, winget, SDK).
+    #[serde(default)]
+    pub adb_path: String,
+}
+
+/// Valeur par défaut d'un booléen activé (les anciens fichiers n'ont pas le champ).
+fn default_enabled() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -38,6 +60,8 @@ impl Default for Settings {
             interval_secs: 5,
             ping_target: network::DEFAULT_PING_TARGET.to_string(),
             adapter_refresh_secs: 30,
+            usb_tether_auto: true,
+            adb_path: String::new(),
         }
     }
 }
@@ -92,6 +116,13 @@ impl Settings {
             adapter_refresh_secs: self
                 .adapter_refresh_secs
                 .clamp(MIN_REFRESH_SECS, MAX_REFRESH_SECS),
+            usb_tether_auto: self.usb_tether_auto,
+            adb_path: self
+                .adb_path
+                .trim()
+                .chars()
+                .take(MAX_ADB_PATH_LEN)
+                .collect(),
         }
     }
 
@@ -399,14 +430,41 @@ pub fn start_monitor(
         let mut reachability = Reachability::default();
         let mut last_failover_enabled = false;
         let mut last_adapter_signature: Option<String> = None;
+        let mut last_rndis: Option<String> = None;
+        let mut force_adapter_refresh = false;
+        let mut last_usb_check = std::time::Instant::now();
+
+        // Partage USB (ADB): le travail se fait hors du cycle de monitoring et
+        // rend son résultat par un drapeau lu au tick suivant.
+        let adb_busy = Arc::new(AtomicBool::new(false));
+        let usb_armed = Arc::new(AtomicBool::new(false));
+        let usb_serial: Arc<std::sync::Mutex<Option<String>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let usb_warning: Arc<std::sync::Mutex<Option<String>>> =
+            Arc::new(std::sync::Mutex::new(None));
 
         loop {
             tick_count += 1;
+
+            // Résultat du partage USB obtenu au tick précédent: la carte RNDIS
+            // arrive, on le signale et on relit la liste des interfaces.
+            if usb_armed.swap(false, Ordering::Relaxed) {
+                let serial = usb_serial
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                    .unwrap_or_default();
+                logger::log_file(&format!("USB: partage activé sur '{serial}'"));
+                let _ = app_handle.emit("usb-tethering-armed", &serial);
+                force_adapter_refresh = true;
+            }
 
             let Settings {
                 interval_secs,
                 ping_target,
                 adapter_refresh_secs,
+                usb_tether_auto,
+                adb_path,
             } = settings.read().await.clone().validated();
 
             let refresh_interval = (adapter_refresh_secs / interval_secs).max(1);
@@ -419,7 +477,10 @@ pub fn start_monitor(
             // ── Mesures réseau (bloquantes: PowerShell + ping.exe) ──
             // Exécutées dans un thread dédié pour ne pas bloquer le runtime
             // async de Tauri (commandes et événements partagent ce runtime).
-            let adapters_fresh = tick_count % refresh_interval == 1 || cached_adapters.is_empty();
+            let adapters_fresh = force_adapter_refresh
+                || tick_count % refresh_interval == 1
+                || cached_adapters.is_empty();
+            force_adapter_refresh = false;
             let network_tick = tokio::task::spawn_blocking({
                 let target = ping_target.clone();
                 move || {
@@ -515,7 +576,65 @@ pub fn start_monitor(
                     last_adapter_signature = Some(signature);
                 }
 
+                // La carte RNDIS du téléphone: son apparition ou sa
+                // disparition est journalisée une seule fois.
+                let rndis = adapters
+                    .iter()
+                    .find(|adapter| adb::is_rndis(&adapter.description))
+                    .map(|adapter| adapter.name.clone());
+                if rndis != last_rndis {
+                    if let Some(name) = &rndis {
+                        logger::log_file(&format!("USB: carte '{name}' détectée"));
+                    }
+                    last_rndis = rndis;
+                }
+
                 cached_adapters = adapters;
+            }
+
+            // ── Partage USB du téléphone (ADB) ──
+            // Android ne garde pas la fonction `rndis` après un débranchement:
+            // la commande est rejouée ici, tant qu'aucune carte RNDIS n'est
+            // active sur le poste.
+            //
+            // Le travail part dans un thread détaché: une commande ADB lente
+            // ne doit pas retarder le cycle de monitoring.
+            if usb_tether_auto
+                && !adb_busy.load(Ordering::Relaxed)
+                && last_usb_check.elapsed() >= Duration::from_secs(USB_TETHER_CHECK_SECS)
+            {
+                last_usb_check = std::time::Instant::now();
+                let adb_path = adb_path.clone();
+                let armed_flag = usb_armed.clone();
+                let serial_store = usb_serial.clone();
+                let busy = adb_busy.clone();
+                let warning_store = usb_warning.clone();
+
+                adb_busy.store(true, Ordering::Relaxed);
+                tokio::task::spawn_blocking(move || {
+                    let outcome = match adb::Adb::open(&adb_path) {
+                        Ok(mut client) => client.check(),
+                        Err(reason) => adb::Outcome::Failed(reason),
+                    };
+
+                    match outcome {
+                        adb::Outcome::Armed(serial) => {
+                            *serial_store.lock().unwrap_or_else(|e| e.into_inner()) = Some(serial);
+                            armed_flag.store(true, Ordering::Relaxed);
+                        }
+                        adb::Outcome::Failed(reason) => {
+                            // Un même avertissement n'est pas rejoué: le
+                            // journal se remplissait d'une ligne par tick.
+                            let mut last = warning_store.lock().unwrap_or_else(|e| e.into_inner());
+                            if last.as_deref() != Some(reason.as_str()) {
+                                logger::log_file(&format!("WARN partage USB: {reason}"));
+                                *last = Some(reason);
+                            }
+                        }
+                        _ => {}
+                    }
+                    busy.store(false, Ordering::Relaxed);
+                });
             }
 
             // Connectivité affichée: hystérésis pour ne pas clignoter sur un
@@ -972,6 +1091,7 @@ mod tests {
             interval_secs: 0,
             ping_target: String::new(),
             adapter_refresh_secs: 1,
+            ..Settings::default()
         }
         .validated();
         assert_eq!(too_fast.interval_secs, MIN_INTERVAL_SECS);
@@ -982,6 +1102,7 @@ mod tests {
             interval_secs: 10_000,
             ping_target: "  1.1.1.1  ".to_string(),
             adapter_refresh_secs: 10_000,
+            ..Settings::default()
         }
         .validated();
         assert_eq!(too_slow.interval_secs, MAX_INTERVAL_SECS);
@@ -992,9 +1113,31 @@ mod tests {
             interval_secs: 5,
             ping_target: "8.8.8.8 & calc.exe".to_string(),
             adapter_refresh_secs: 30,
+            ..Settings::default()
         }
         .validated();
         assert_eq!(injectable.ping_target, network::DEFAULT_PING_TARGET);
+    }
+
+    #[test]
+    fn reglages_adb_par_defaut_et_bornes() {
+        let defaults = Settings::default();
+        assert!(defaults.usb_tether_auto);
+        assert_eq!(defaults.adb_path, "");
+
+        // Un fichier écrit avant l'option ADB doit rester lisible.
+        let legacy: Settings = serde_json::from_str(
+            r#"{"interval_secs":5,"ping_target":"1.1.1.1","adapter_refresh_secs":30}"#,
+        )
+        .unwrap();
+        assert!(legacy.usb_tether_auto);
+
+        let path = Settings {
+            adb_path: "  C:\\Program Files\\adb.exe  ".to_string(),
+            ..Settings::default()
+        }
+        .validated();
+        assert_eq!(path.adb_path, "C:\\Program Files\\adb.exe");
     }
 
     fn adapter(name: &str, description: &str, status: &str) -> network::NetworkAdapter {

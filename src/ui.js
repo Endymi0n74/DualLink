@@ -18,6 +18,10 @@ let logRefreshBusy = false;
 // Une seule relecture de la liste des cartes à la fois: le monitor signale un
 // changement matériel, le rendu ne doit pas être relancé à chaque tick.
 let adapterRefreshBusy = false;
+// La liste du monitor est en cache (30 s): pendant la fenêtre de décalage,
+// chaque tick déclencherait un rechargement. On espace les rechargements.
+let lastAdapterAutoRefresh = 0;
+const ADAPTER_AUTO_REFRESH_MS = 15000;
 // Signature du bandeau failover: évite de reconstruire le panneau à chaque
 // tick quand rien n'a changé.
 let lastFailoverSignature = '';
@@ -253,6 +257,7 @@ export function render() {
     const actions = document.createElement('div');
     actions.className = 'actions-bar';
     actions.innerHTML = '<button class="btn" id="btn-refresh"><span>🔄</span> Actualiser</button>'
+      + '<button class="btn" id="btn-usb-tether"><span>📱</span> Partage USB</button>'
       + '<button class="btn btn-primary" id="btn-apply" ' + (eligible < 2 ? 'disabled' : '') + '><span>💾</span> Appliquer le mode</button>';
     app.appendChild(actions);
   }
@@ -537,7 +542,7 @@ function renderLogsView() {
 }
 
 function renderSettingsView() {
-  const s = settingsData || { interval_secs: 5, ping_target: '1.1.1.1', adapter_refresh_secs: 30 };
+  const s = settingsData || { interval_secs: 5, ping_target: '1.1.1.1', adapter_refresh_secs: 30, usb_tether_auto: true, adb_path: '' };
   const container = document.createElement('div');
   container.className = 'glass settings-card';
   container.innerHTML = '<div class="section-title">⚙️ Configuration du monitoring</div>'
@@ -566,7 +571,27 @@ function renderSettingsView() {
     + '<span class="settings-hint">Fréquence de rafraîchissement de la liste des cartes (défaut: 30s)</span>'
     + '</div>'
     + '</div>'
+    + '<div class="section-title">📱 Partage USB du téléphone (ADB)</div>'
+    + '<div class="settings-grid">'
+    + '<div class="settings-group">'
+    + '<label class="settings-label">Partage USB automatique</label>'
+    + '<div class="settings-input-wrap">'
+    + '<input type="checkbox" id="setting-usb-auto" class="settings-input settings-check" ' + (s.usb_tether_auto ? 'checked' : '') + '>'
+    + '<span class="settings-unit">au branchement</span>'
+    + '</div>'
+    + '<span class="settings-hint">Le téléphone doit avoir « Débogage USB » activé et cette PC autorisée</span>'
+    + '</div>'
+    + '<div class="settings-group">'
+    + '<label class="settings-label">Chemin de adb.exe</label>'
+    + '<div class="settings-input-wrap">'
+    + '<input type="text" id="setting-adb" class="settings-input settings-input-text" value="' + (s.adb_path || '') + '" placeholder="détection automatique">'
+    + '</div>'
+    + '<span class="settings-hint" id="adb-status">Android Platform-Tools (adb) non vérifié</span>'
+    + '</div>'
+    + '</div>'
     + '<div class="settings-actions">'
+    + '<button class="btn" id="btn-adb-test">🔍 Tester ADB</button>'
+    + '<button class="btn" id="btn-tether-screen">📱 Écran de partage</button>'
     + '<button class="btn" id="btn-settings-defaults">🔄 Rétablir défauts</button>'
     + '<button class="btn btn-primary" id="btn-settings-save">💾 Sauvegarder</button>'
     + '</div>'
@@ -623,11 +648,47 @@ function bindEvents() {
     const interval = parseInt(document.getElementById('setting-interval').value) || 5;
     const target = (document.getElementById('setting-target').value || '1.1.1.1').trim();
     const refresh = parseInt(document.getElementById('setting-refresh').value) || 30;
+    const usbAuto = document.getElementById('setting-usb-auto').checked;
+    const adbPath = (document.getElementById('setting-adb').value || '').trim();
     try {
-      settingsData = await api.saveSettings(interval, target, refresh);
+      settingsData = await api.saveSettings(interval, target, refresh, usbAuto, adbPath);
       showToast('✅ Réglages sauvegardés', 'success');
     } catch (err) {
       showToast('❌ Erreur: ' + err, 'error');
+    }
+  });
+
+  // Test ADB: dit si le binaire est trouvé et si un téléphone est autorisé.
+  const btnAdbTest = document.getElementById('btn-adb-test');
+  if (btnAdbTest) btnAdbTest.addEventListener('click', async () => {
+    const status = document.getElementById('adb-status');
+    btnAdbTest.disabled = true;
+    try {
+      const info = await api.adbStatus();
+      if (!info.adb_path) {
+        status.textContent = 'adb introuvable — installez Android Platform-Tools';
+      } else if (info.devices.length === 0) {
+        status.textContent = 'adb trouvé (' + info.adb_path + ') — aucun téléphone branché';
+      } else {
+        const ready = info.devices.filter(d => d.ready).length;
+        status.textContent = 'adb trouvé — ' + ready + '/' + info.devices.length + ' téléphone(s) autorisé(s)';
+      }
+    } catch (err) {
+      status.textContent = 'Erreur: ' + err;
+    } finally {
+      btnAdbTest.disabled = false;
+    }
+  });
+
+  // Point d'accès Wi-Fi du téléphone: l'écran s'ouvre, l'utilisateur bascule
+  // l'interrupteur (Android refuse la commande shell sur les builds
+  // grand public).
+  const btnTetherScreen = document.getElementById('btn-tether-screen');
+  if (btnTetherScreen) btnTetherScreen.addEventListener('click', async () => {
+    try {
+      showToast('📱 ' + await api.openTetheringScreen(), 'info');
+    } catch (err) {
+      showToast('❌ ' + err, 'error');
     }
   });
 
@@ -635,7 +696,7 @@ function bindEvents() {
   const btnDefaults = document.getElementById('btn-settings-defaults');
   if (btnDefaults) btnDefaults.addEventListener('click', async () => {
     try {
-      settingsData = await api.saveSettings(5, '1.1.1.1', 30);
+      settingsData = await api.saveSettings(5, '1.1.1.1', 30, true, '');
       showToast('🔄 Défauts restaurés', 'info');
       render();
     } catch (err) {
@@ -690,6 +751,22 @@ function bindEvents() {
   if (btnRefresh) btnRefresh.addEventListener('click', async () => {
     await refreshAdapters();
     showToast('🔄 Listes actualisées', 'info');
+  });
+
+  // Partage USB du téléphone: la commande ADB bascule la fonction USB en
+  // `rndis`, le téléphone expose alors sa carte réseau.
+  const btnUsbTether = document.getElementById('btn-usb-tether');
+  if (btnUsbTether) btnUsbTether.addEventListener('click', async () => {
+    btnUsbTether.disabled = true;
+    try {
+      const message = await api.armUsbTethering();
+      showToast('📱 ' + message, message.includes('activé') ? 'success' : 'info');
+      await refreshAdapters();
+    } catch (err) {
+      showToast('❌ ' + err, 'error');
+    } finally {
+      btnUsbTether.disabled = false;
+    }
   });
 
   const btnApply = document.getElementById('btn-apply');
@@ -871,8 +948,10 @@ export function updateMonitorState(state) {
   // recharger les cartes une fois au lieu d'attendre un clic sur Actualiser.
   const names = state.adapter_names || [];
   if (names.length > 0 && currentView === 'main' && !adapterRefreshBusy
+      && Date.now() - lastAdapterAutoRefresh > ADAPTER_AUTO_REFRESH_MS
       && !sameAdapterNames(names, adapters.map(a => a.name))) {
     adapterRefreshBusy = true;
+    lastAdapterAutoRefresh = Date.now();
     refreshAdapters().finally(() => { adapterRefreshBusy = false; });
   }
 

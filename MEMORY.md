@@ -223,6 +223,17 @@ cd dualink && npm run tauri:build
 - **Garde-fous**: ✅ `cargo fmt --check`, `cargo check`, `cargo clippy --all-targets -- -D warnings` propres; frontend `vite build` OK.
 - **Périmètre**: aucun processus en plus en régime normal (réutilise `list_adapters`); `Enable-NetAdapter` uniquement quand un adaptateur désactivé apparaît.
 
+## 📱 Partage USB du téléphone via ADB (2026-10-20)
+- **Constat**: Android n'expose la carte RNDIS que si la fonction USB passe en `rndis`. Windows ne peut pas le décider seul; le téléphone, si. Testé sur POCO X7 (HyperOS): `adb shell svc usb setFunctions rndis` fonctionne, le téléphone démarre son partage (`rndis0 - TetheredState`) et Windows voit la carte RNDIS. L'état ne survit PAS au débranchement (mesuré: `sys.usb.config` revient à `adb`), donc la commande doit être rejouée à chaque branchement.
+- **Module** (`adb.rs`): `locate()` (chemin configuré, PATH, winget, SDK Android), `parse_devices()`, `plan()` (premier appareil autorisé), `usb_function()` (`getprop sys.usb.config`), `has_rndis()`, `set_rndis()`, `open_tethering_screen()` (`am start -a android.settings.TETHER_SETTINGS`). Processus sans fenêtre, délai maximal 15 s, `CREATE_NO_WINDOW`.
+- **Piège**: `svc` renvoie le code 255 même quand la commande passe. Le succès se lit dans la sortie (`setCurrentFunctions opId:1`), pas dans le code de retour.
+- **Décision côté téléphone**: la fonction USB demandée au téléphone fait foi, pas la liste des cartes Windows (elle a jusqu'à 30 s de retard). `Adb::check()` renvoie `Present` / `NoDevice` / `Armed` / `Failed`.
+- **Cadence**: une tentative toutes les 10 s, dans un thread détaché: une commande ADB lente ne retarde pas le cycle de monitoring. Le résultat revient par un drapeau lu au tick suivant (journal + toast + relecture de la liste).
+- **Point d'accès Wi-Fi**: impossible à allumer à distance sur HyperOS (`cmd wifi set-wifi-ap-enabled` → SecurityException; `cmd tethering` → « No shell command implementation »). Seul l'écran de partage peut être ouvert sur le téléphone, l'utilisateur bascule l'interrupteur. Sans importance pour le PC, qui passe par le câble.
+- **Délais sur tous les processus** (`network.rs`): `run_hidden_command` a désormais un délai maximal (20 s PowerShell, 10 s ping/route) et tue le processus. `Command::output()` attendait indéfiniment: un `Get-NetAdapter` pendant une ré-enumération USB bloquait le monitor (constaté: 2 min sans journal).
+- **Réglages**: `usb_tether_auto` (défaut vrai) et `adb_path` (vide = détection). Bouton « Partage USB », « Tester ADB », « Écran de partage » dans l'UI.
+- **Tests**: 41 unitaires (parsing `adb devices`, choix de l'appareil, détection RNDIS, réglages ADB, backward compatible du `settings.json`).
+
 ## 📦 Release v1.3.1 (2026-10-20)
 - Retrait du montage USB automatique: Android seul décide d'exposer une carte RNDIS, le PC ne peut pas déclencher le partage.
 - Cible de connectivité par défaut passée à `1.1.1.1`: `8.8.8.8` perdait 50 à 100 % des paquets sur la ligne testée et faisait clignoter le badge.
