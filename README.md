@@ -25,7 +25,6 @@ Vous avez une **Box ADSL** qui rame et un **partage de connexion téléphone** ?
 | Feature | Description |
 |---------|-------------|
 | 🔌 **Toggle adapters** | Activez/désactivez vos cartes réseau en un clic |
-| 📱 **Montage USB auto** | Brancher le téléphone monte tout seul son partage USB (RNDIS), sans clic |
 | ⚖️ **Load Balancing** | Métriques dynamiques pour répartir le trafic |
 | 🛡️ **Failover auto** | Détection de perte (2 échecs) → bascule. Restauration (3 succès) → retour |
 | 📊 **Dashboard temps réel** | Graphique canvas de latence, stats min/max/moyenne, historique 10 mesures |

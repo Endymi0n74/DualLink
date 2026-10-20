@@ -24,6 +24,7 @@ body::after{width:350px;height:350px;background:radial-gradient(circle,var(--acc
 .nav-btn.active{background:rgba(0,212,255,.08);border-color:rgba(0,212,255,.25);color:var(--accent-blue)}
 .status-dot{width:8px;height:8px;border-radius:50%;background:var(--accent-red);transition:background .3s}
 .status-dot.online{background:var(--accent-green);box-shadow:0 0 8px var(--accent-green)}
+.status-dot.unknown{background:var(--accent-orange)}
 .section-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);margin-bottom:14px}
 .mode-selector{display:flex;gap:12px}
 .mode-btn{flex:1;display:flex;align-items:center;gap:10px;padding:14px 18px;background:var(--glass-bg);backdrop-filter:blur(12px);border:1px solid var(--glass-border);border-radius:var(--radius-sm);color:var(--text-secondary);font-size:14px;font-weight:500;cursor:pointer;transition:all .3s}
@@ -50,6 +51,9 @@ body::after{width:350px;height:350px;background:radial-gradient(circle,var(--acc
 .adapter-connectivity{display:flex;align-items:center;gap:4px;font-size:12px}
 .adapter-connectivity.connected{color:var(--accent-green)}
 .adapter-connectivity.disconnected{color:var(--accent-red)}
+.adapter-connectivity.unknown{color:var(--accent-orange)}
+.adapter-connectivity.inactive{color:var(--text-muted)}
+.adapter-latency[hidden]{display:none}
 .toggle{position:relative;width:48px;height:26px;flex-shrink:0;cursor:pointer}
 .toggle input{display:none}
 .toggle-slider{position:absolute;inset:0;background:var(--toggle-bg);border-radius:13px;border:1px solid var(--glass-border);transition:all .3s}

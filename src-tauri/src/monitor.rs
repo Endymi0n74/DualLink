@@ -1,7 +1,6 @@
 use crate::logger;
 use crate::network;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
@@ -10,6 +9,13 @@ use tokio::sync::RwLock;
 pub const FAILOVER_THRESHOLD: u32 = 2;
 /// Nombre de succès consécutifs requis pour restaurer le primaire.
 pub const RECOVERY_THRESHOLD: u32 = 3;
+/// Nombre d'échecs consécutifs avant d'afficher « Hors ligne ».
+///
+/// Distinct de `FAILOVER_THRESHOLD`: la bascule concerne le primaire, cet
+/// état concerne la connectivité affichée. Un ping perdu isolé (Wi-Fi,
+/// changement de route pendant une bascule) ne doit pas faire clignoter
+/// l'en-tête toutes les 5 s.
+const OFFLINE_THRESHOLD: u32 = 2;
 
 /// Bornes de validation des réglages.
 const MIN_INTERVAL_SECS: u64 = 1;
@@ -182,6 +188,71 @@ impl FailoverCounters {
     }
 }
 
+//     ping   failures  affiché
+//     ok     0         en ligne
+//     échec  1         en ligne   (échec isolé ignoré)
+//     échec  2         hors ligne
+//
+/// État de connectivité affiché, avec hystérésis.
+///
+/// `known` reste faux tant qu'aucune mesure n'a permis de trancher: l'UI
+/// affiche alors « Vérification… » au lieu d'un « Déconnecté » mensonger au
+/// démarrage. Un succès efface les échecs accumulés; il faut
+/// `OFFLINE_THRESHOLD` échecs consécutifs pour passer hors ligne.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Reachability {
+    online: bool,
+    known: bool,
+    failures: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReachabilityChange {
+    None,
+    Online,
+    Offline,
+}
+
+impl Reachability {
+    pub fn observe(&mut self, reachable: bool) -> ReachabilityChange {
+        if reachable {
+            // Inconnu -> en ligne compte aussi comme un changement, pour
+            // journaliser une seule fois le premier état établi.
+            let changed = !self.known || !self.online;
+            self.online = true;
+            self.known = true;
+            self.failures = 0;
+            return if changed {
+                ReachabilityChange::Online
+            } else {
+                ReachabilityChange::None
+            };
+        }
+
+        self.failures += 1;
+        if self.failures < OFFLINE_THRESHOLD {
+            return ReachabilityChange::None;
+        }
+
+        let changed = !self.known || self.online;
+        self.online = false;
+        self.known = true;
+        if changed {
+            ReachabilityChange::Offline
+        } else {
+            ReachabilityChange::None
+        }
+    }
+
+    pub fn is_online(&self) -> bool {
+        self.online
+    }
+
+    pub fn is_known(&self) -> bool {
+        self.known
+    }
+}
+
 //     Joignable ?  failures  successes  is_failed_over  Action
 //     non          1         0           false           None
 //     non          2         0           false           Switch
@@ -232,6 +303,10 @@ pub fn decide(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorState {
     pub internet_reachable: bool,
+    /// Faux tant qu'aucune mesure n'a permis de trancher: le frontend affiche
+    /// « Vérification… » plutôt qu'un « Déconnecté » au démarrage.
+    #[serde(default)]
+    pub internet_known: bool,
     pub overall_latency_ms: Option<u64>,
     pub adapters: Vec<AdapterStatus>,
     pub last_check: String,
@@ -242,6 +317,7 @@ impl Default for MonitorState {
     fn default() -> Self {
         Self {
             internet_reachable: false,
+            internet_known: false,
             overall_latency_ms: None,
             adapters: Vec::new(),
             last_check: "Never".to_string(),
@@ -300,32 +376,6 @@ fn probe_primary(target: &str, config: &FailoverConfig) -> Option<bool> {
 
 // ─── Boucle de monitoring ─────────────────────────────────────────
 
-/// Sélectionne les adaptateurs de partage USB du téléphone à activer.
-///
-/// Politique: uniquement ceux administravely désactivés — un adaptateur déjà
-/// monté (« Up »/« Disconnected ») est laissé tel quel. `attempted` mémorise
-/// les noms déjà tentés pour ne pas relancer PowerShell à chaque tick; un nom
-/// est oublié dès que l'adaptateur quitte l'état désactivé, donc un
-/// débranchement/rebranchement du téléphone déclenche une nouvelle tentative.
-fn tethering_to_enable(
-    adapters: &[network::NetworkAdapter],
-    attempted: &mut HashSet<String>,
-) -> Vec<String> {
-    let disabled: Vec<String> = adapters
-        .iter()
-        .filter(|a| a.status == network::STATUS_DISABLED)
-        .filter(|a| network::is_usb_tethering(&a.name, &a.description))
-        .map(|a| a.name.clone())
-        .collect();
-
-    attempted.retain(|name| disabled.contains(name));
-
-    disabled
-        .into_iter()
-        .filter(|name| attempted.insert(name.clone()))
-        .collect()
-}
-
 pub fn start_monitor(
     app_handle: tauri::AppHandle,
     state: Arc<RwLock<MonitorState>>,
@@ -339,8 +389,9 @@ pub fn start_monitor(
         let mut cached_adapters: Vec<network::NetworkAdapter> = Vec::new();
         let mut cached_statuses: Vec<AdapterStatus> = Vec::new();
         let mut counters = FailoverCounters::default();
+        let mut reachability = Reachability::default();
         let mut last_failover_enabled = false;
-        let mut tether_attempted: HashSet<String> = HashSet::new();
+        let mut last_adapter_signature: Option<String> = None;
 
         loop {
             tick_count += 1;
@@ -406,9 +457,15 @@ pub fn start_monitor(
                     // de processus et allonge le tick d'environ 2 s. Un statut
                     // par adaptateur rafraîchi toutes les 30 s est suffisant:
                     // il sert à l'affichage, pas à la décision de failover.
+                    // Sans élévation, la route épinglée est impossible et le
+                    // repli `ping -S` ne garantit pas l'interface: mieux vaut
+                    // un état « inconnu » qu'une mesure dégradée et un WARN
+                    // toutes les 30 s.
                     let statuses = match &adapters {
-                        Some(list) => probe_adapter_statuses(&target, list),
-                        None => Vec::new(),
+                        Some(list) if network::is_elevated() => {
+                            probe_adapter_statuses(&target, list)
+                        }
+                        _ => Vec::new(),
                     };
 
                     (adapters, global, primary, statuses)
@@ -439,42 +496,27 @@ pub fn start_monitor(
                 };
 
             if let Some(adapters) = maybe_adapters {
-                logger::log_file(&format!(
-                    "Monitor adapters refreshed: {} found",
-                    adapters.len()
-                ));
+                // Ne journalise que lorsque la liste change réellement: une
+                // ligne « 3 found » toutes les 30 s pour rien noyait le
+                // journal et faisait croire à une activité permanente.
+                let signature = adapter_signature(&adapters);
+                if last_adapter_signature.as_deref() != Some(&signature) {
+                    logger::log_file(&format!(
+                        "Monitor adapters refreshed: {} found",
+                        adapters.len()
+                    ));
+                    last_adapter_signature = Some(signature);
+                }
+
                 cached_adapters = adapters;
             }
 
-            // ── Partage USB: montage automatique du téléphone ──
-            // Décidé sur la liste fraîche (un adaptateur tout juste apparu ne
-            // doit pas attendre le prochain refresh). L'activation est un appel
-            // PowerShell: exécutée hors du runtime async.
-            let to_enable = tethering_to_enable(&cached_adapters, &mut tether_attempted);
-
-            if !to_enable.is_empty() {
-                let enabled = tokio::task::spawn_blocking(move || {
-                    let mut names = Vec::new();
-                    for name in to_enable {
-                        match network::enable_adapter(&name) {
-                            Ok(()) => names.push(name),
-                            Err(e) => logger::log_file(&format!(
-                                "WARN montage auto partage USB '{name}': {e:#}"
-                            )),
-                        }
-                    }
-                    names
-                })
-                .await
-                .unwrap_or_default();
-
-                for name in &enabled {
-                    logger::log_file(&format!("USB TETHERING: '{name}' activé automatiquement"));
-                }
-
-                if !enabled.is_empty() {
-                    let _ = app_handle.emit("tethering-auto-enabled", &enabled);
-                }
+            // Connectivité affichée: hystérésis pour ne pas clignoter sur un
+            // ping perdu isolé. Le changement est journalisé une seule fois.
+            match reachability.observe(global_connectivity.reachable) {
+                ReachabilityChange::Online => logger::log_file("Monitor: connectivité rétablie"),
+                ReachabilityChange::Offline => logger::log_file("Monitor: perte de connectivité"),
+                ReachabilityChange::None => {}
             }
 
             // Le dernier statut connu est conservé entre deux rafraîchissements.
@@ -608,13 +650,19 @@ pub fn start_monitor(
             // ── Publication de l'état ──
             let event_payload = {
                 let mut state_guard = state.write().await;
-                state_guard.internet_reachable = global_connectivity.reachable;
-                state_guard.overall_latency_ms = global_connectivity.latency_ms;
+                state_guard.internet_reachable = reachability.is_online();
+                state_guard.internet_known = reachability.is_known();
+                state_guard.overall_latency_ms = if reachability.is_online() {
+                    global_connectivity.latency_ms
+                } else {
+                    None
+                };
                 state_guard.adapters = cached_statuses.clone();
                 state_guard.last_check = now.clone();
 
                 let mut payload = MonitorState {
                     internet_reachable: state_guard.internet_reachable,
+                    internet_known: state_guard.internet_known,
                     overall_latency_ms: state_guard.overall_latency_ms,
                     adapters: state_guard.adapters.clone(),
                     last_check: state_guard.last_check.clone(),
@@ -633,6 +681,63 @@ pub fn start_monitor(
             tokio::time::sleep(Duration::from_secs(interval_secs)).await;
         }
     });
+}
+
+/// Empreinte de la liste d'adaptateurs pour ne journaliser que les
+/// changements réels (nom, index, statut).
+fn adapter_signature(adapters: &[network::NetworkAdapter]) -> String {
+    adapters
+        .iter()
+        .map(|a| format!("{}|{}|{}", a.interface_index, a.name, a.status))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Interfaces réellement sondables: connectées, avec une IP et une passerelle
+/// IPv4 valides.
+///
+/// Un adaptateur virtuel (Hyper-V, VMware, WSL) est « Up » sans passerelle par
+/// défaut. Le sonder produisait un WARN de repli `ping -S` toutes les 30 s et
+/// un « Déconnecté » mensonger: il n'a pas de route à tester, son état reste
+/// inconnu.
+fn probe_candidates(
+    adapters: &[network::NetworkAdapter],
+    details: &[network::AdapterDetails],
+) -> Vec<network::RouteTarget> {
+    adapters
+        .iter()
+        .filter(|a| a.is_connected)
+        .filter_map(|a| {
+            details
+                .iter()
+                .find(|d| d.interface_index == a.interface_index)
+        })
+        .filter(|d| network::validate_gateway(d.default_gateway.trim()))
+        .filter(|d| !d.ip_address.trim().is_empty() && d.ip_address != "N/A")
+        .map(|d| network::RouteTarget {
+            interface_index: d.interface_index,
+            source_ip: Some(d.ip_address.clone()),
+            gateway: Some(d.default_gateway.clone()),
+        })
+        .collect()
+}
+
+/// Traduit une sonde en statut affichable.
+///
+/// Absente ou dégradée => `status_known: false`: l'UI affiche « État inconnu »
+/// au lieu de prétendre que l'adaptateur est déconnecté.
+fn status_for(
+    adapter: &network::NetworkAdapter,
+    probe: Option<&network::ConnectivityResult>,
+) -> AdapterStatus {
+    let usable = probe.filter(|r| !r.degraded);
+
+    AdapterStatus {
+        name: adapter.name.clone(),
+        reachable: usable.is_some_and(|r| r.reachable),
+        latency_ms: usable.and_then(|r| r.latency_ms),
+        status_known: usable.is_some(),
+    }
 }
 
 //     8.8.8.8 ─┬─ route épinglée (ifA) ─> ping A ─> cible
@@ -663,20 +768,7 @@ fn probe_adapter_statuses(
         }
     };
 
-    let routes: Vec<network::RouteTarget> = connected
-        .iter()
-        .filter_map(|adapter| {
-            details
-                .iter()
-                .find(|d| d.interface_index == adapter.interface_index)
-                .map(|d| network::RouteTarget {
-                    interface_index: d.interface_index,
-                    source_ip: Some(d.ip_address.clone()),
-                    gateway: Some(d.default_gateway.clone()),
-                })
-        })
-        .collect();
-
+    let routes = probe_candidates(adapters, &details);
     let probes = network::probe_routes(target, &routes);
 
     connected
@@ -684,31 +776,10 @@ fn probe_adapter_statuses(
         .map(|adapter| {
             let probe = probes
                 .iter()
-                .find(|(index, _)| *index == adapter.interface_index);
+                .find(|(index, _)| *index == adapter.interface_index)
+                .map(|(_, result)| result);
 
-            let degraded = probe.is_some_and(|(_, r)| r.degraded);
-            if degraded {
-                // Sonde dégradée: le repli `ping -S` peut repartir par la
-                // route par défaut. L'UI continue d'afficher « Déconnecté »
-                // (champ `reachable: false`, frontend inchangé), mais l'état
-                // réel est « inconnu » — `status_known: false` le signale
-                // pour une prochaine évolution d'affichage.
-                logger::log_file(&format!(
-                    "WARN sonde '{}' (if {}) dégradée: interface non garantie, état inconnu",
-                    adapter.name, adapter.interface_index
-                ));
-            }
-
-            AdapterStatus {
-                name: adapter.name.clone(),
-                reachable: !degraded && probe.is_some_and(|(_, r)| r.reachable),
-                latency_ms: if degraded {
-                    None
-                } else {
-                    probe.and_then(|(_, r)| r.latency_ms)
-                },
-                status_known: !degraded,
-            }
+            status_for(adapter, probe)
         })
         .collect()
 }
@@ -929,54 +1000,143 @@ mod tests {
     }
 
     #[test]
-    fn monte_le_partage_usb_desactive_seulement() {
-        let mut attempted = HashSet::new();
-        let adapters = vec![
-            adapter("Wi-Fi", "Intel(R) Wi-Fi 6 AX201", "Up"),
-            adapter(
-                "Ethernet 2",
-                "Remote NDIS based Internet Sharing Device",
-                "Disabled",
-            ),
-            // Activé mais sans lien: rien à monter.
-            adapter(
-                "Ethernet 3",
-                "Remote NDIS based Internet Sharing Device",
-                "Disconnected",
-            ),
-        ];
+    fn un_ping_perdu_ne_fait_pas_clignoter_l_etat() {
+        let mut r = Reachability::default();
 
-        assert_eq!(
-            tethering_to_enable(&adapters, &mut attempted),
-            vec!["Ethernet 2"]
-        );
+        assert_eq!(r.observe(true), ReachabilityChange::Online);
+        assert!(r.is_online());
 
-        // Déjà tenté et toujours désactivé: pas de nouvelle tentative au tick
-        // suivant (évite de relancer PowerShell et de relogger).
-        assert!(tethering_to_enable(&adapters, &mut attempted).is_empty());
+        // Un échec isolé (Wi-Fi, changement de route pendant une bascule)
+        // laisse l'en-tête « Connecté ».
+        assert_eq!(r.observe(false), ReachabilityChange::None);
+        assert!(r.is_online());
+
+        assert_eq!(r.observe(false), ReachabilityChange::Offline);
+        assert!(!r.is_online());
+
+        assert_eq!(r.observe(true), ReachabilityChange::Online);
+        assert!(r.is_online());
     }
 
     #[test]
-    fn retente_le_montage_apres_rebranchement() {
-        let mut attempted = HashSet::new();
-        let disabled = vec![adapter(
-            "Ethernet 2",
-            "Remote NDIS based Internet Sharing Device",
-            "Disabled",
-        )];
+    fn etat_inconnu_avant_la_premiere_mesure() {
+        let mut r = Reachability::default();
+        assert!(!r.is_known());
 
-        assert_eq!(
-            tethering_to_enable(&disabled, &mut attempted),
-            vec!["Ethernet 2"]
-        );
+        assert_eq!(r.observe(false), ReachabilityChange::None);
+        assert!(!r.is_known());
+        assert!(!r.is_online());
 
-        // Téléphone débranché: l'adaptateur disparaît, le nom est oublié.
-        assert!(tethering_to_enable(&[], &mut attempted).is_empty());
+        assert_eq!(r.observe(false), ReachabilityChange::Offline);
+        assert!(r.is_known());
+        assert!(!r.is_online());
+    }
 
-        // Rebranché désactivé: nouvelle tentative.
-        assert_eq!(
-            tethering_to_enable(&disabled, &mut attempted),
-            vec!["Ethernet 2"]
-        );
+    #[test]
+    fn un_succes_efface_les_echecs_accumules() {
+        let mut r = Reachability::default();
+        assert_eq!(r.observe(true), ReachabilityChange::Online);
+
+        assert_eq!(r.observe(false), ReachabilityChange::None);
+        assert_eq!(r.observe(true), ReachabilityChange::None);
+        assert_eq!(r.observe(false), ReachabilityChange::None);
+        assert!(r.is_online());
+
+        assert_eq!(r.observe(false), ReachabilityChange::Offline);
+    }
+
+    #[test]
+    fn signature_adaptateurs_stable_et_sensible_au_statut() {
+        let a = vec![adapter("Wi-Fi", "Realtek", "Up")];
+        let b = vec![adapter("Wi-Fi", "Realtek", "Up")];
+        assert_eq!(adapter_signature(&a), adapter_signature(&b));
+
+        let c = vec![adapter("Wi-Fi", "Realtek", "Disabled")];
+        assert_ne!(adapter_signature(&a), adapter_signature(&c));
+    }
+
+    fn details(name: &str, index: u32, ip: &str, gateway: &str) -> network::AdapterDetails {
+        network::AdapterDetails {
+            name: name.to_string(),
+            interface_index: index,
+            status: "Up".to_string(),
+            description: "desc".to_string(),
+            mac_address: "N/A".to_string(),
+            speed: "N/A".to_string(),
+            ip_address: ip.to_string(),
+            subnet_mask: "255.255.255.0".to_string(),
+            default_gateway: gateway.to_string(),
+            dns_servers: "N/A".to_string(),
+            dhcp_enabled: true,
+            routing_metric: None,
+        }
+    }
+
+    fn up_adapter(name: &str, index: u32) -> network::NetworkAdapter {
+        network::NetworkAdapter {
+            name: name.to_string(),
+            interface_index: index,
+            status: "Up".to_string(),
+            mac_address: "N/A".to_string(),
+            speed: "N/A".to_string(),
+            description: "desc".to_string(),
+            is_connected: true,
+        }
+    }
+
+    #[test]
+    fn ne_sonde_pas_un_adaptateur_sans_passerelle() {
+        let adapters = vec![up_adapter("Wi-Fi", 1), up_adapter("vEthernet", 2)];
+        let details = vec![
+            details("Wi-Fi", 1, "192.168.1.10", "192.168.1.1"),
+            details("vEthernet", 2, "172.28.32.1", ""),
+        ];
+
+        let routes = probe_candidates(&adapters, &details);
+
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].interface_index, 1);
+    }
+
+    #[test]
+    fn statut_inconnu_quand_la_sonde_manque() {
+        let a = up_adapter("vEthernet", 2);
+        let s = status_for(&a, None);
+
+        assert!(!s.reachable);
+        assert!(!s.status_known);
+        assert_eq!(s.latency_ms, None);
+    }
+
+    #[test]
+    fn statut_degrade_reste_inconnu() {
+        let a = up_adapter("Wi-Fi", 1);
+        let probe = network::ConnectivityResult {
+            reachable: true,
+            latency_ms: Some(12),
+            degraded: true,
+        };
+
+        let s = status_for(&a, Some(&probe));
+
+        assert!(!s.reachable);
+        assert!(!s.status_known);
+        assert_eq!(s.latency_ms, None);
+    }
+
+    #[test]
+    fn statut_connu_quand_la_sonde_est_fiable() {
+        let a = up_adapter("Wi-Fi", 1);
+        let probe = network::ConnectivityResult {
+            reachable: true,
+            latency_ms: Some(12),
+            degraded: false,
+        };
+
+        let s = status_for(&a, Some(&probe));
+
+        assert!(s.reachable);
+        assert!(s.status_known);
+        assert_eq!(s.latency_ms, Some(12));
     }
 }

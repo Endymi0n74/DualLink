@@ -17,27 +17,6 @@ pub const METRIC_PRIMARY: u32 = 10;
 /// Métrique appliquée au secondaire en fonctionnement nominal.
 pub const METRIC_SECONDARY: u32 = 100;
 
-/// État renvoyé par `Get-NetAdapter` pour un adaptateur désactivé par
-/// l'administrateur (distinct de « Disconnected », qui est activé mais sans
-/// lien): c'est l'état que prend le partage USB du téléphone quand il a été
-/// coupé, et le seul que le montage automatique doit rallumer.
-pub const STATUS_DISABLED: &str = "Disabled";
-
-/// Fragments (minuscules) identifiant l'adaptateur de partage USB d'un
-/// téléphone. Windows l'expose via le pilote RNDIS, décrit « Remote NDIS
-/// based Internet Sharing Device » (FR: « ... basé sur NDIS distant »); le
-/// nom convivial peut être la marque du téléphone (Android, iPhone).
-const USB_TETHER_MARKERS: &[&str] = &[
-    "rndis",
-    "ndis",
-    "tethering",
-    "internet sharing device",
-    "partage internet",
-    "apple mobile device ethernet",
-    "android",
-    "iphone",
-];
-
 /// Run a command that never shows a console window on Windows
 fn run_hidden_command(cmd: &str, args: &[&str]) -> Result<std::process::Output> {
     let mut command = Command::new(cmd);
@@ -55,6 +34,20 @@ fn run_hidden_command(cmd: &str, args: &[&str]) -> Result<std::process::Output> 
 /// Échappe une valeur destinée à une chaîne PowerShell entre apostrophes.
 fn escape_ps(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+/// Réduit une sortie d'erreur PowerShell à sa première ligne utile.
+///
+/// PowerShell ajoute la position, le jeton fautif et `CategoryInfo` sur une
+/// dizaine de lignes. Dans le journal, cela noie le message et transforme une
+/// erreur d'une ligne en pavé illisible; la première ligne contient le motif.
+fn first_error_line(stderr: &str) -> String {
+    stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Représente un adaptateur réseau du système
@@ -91,7 +84,7 @@ fn run_powershell(script: &str) -> Result<String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("PowerShell error: {}", stderr.trim());
+        anyhow::bail!("PowerShell error: {}", first_error_line(&stderr));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -621,17 +614,6 @@ pub fn list_adapters() -> Result<Vec<NetworkAdapter>> {
     Ok(adapters)
 }
 
-/// Vrai si l'adaptateur est un partage de connexion USB de téléphone.
-///
-/// Le test porte sur le nom ET la description, insensible à la casse, car le
-/// libellé localisé de Windows ne contient pas toujours « NDIS ».
-pub fn is_usb_tethering(name: &str, description: &str) -> bool {
-    let haystack = format!("{name} {description}").to_lowercase();
-    USB_TETHER_MARKERS
-        .iter()
-        .any(|marker| haystack.contains(marker))
-}
-
 /// Enable a network adapter by name
 pub fn enable_adapter(name: &str) -> Result<()> {
     set_adapter_enabled(name, true)
@@ -1033,34 +1015,18 @@ mod tests {
     }
 
     #[test]
-    fn detecte_le_partage_usb_du_telephone() {
-        // RNDIS Windows (EN).
-        assert!(is_usb_tethering(
-            "Ethernet 3",
-            "Remote NDIS based Internet Sharing Device"
-        ));
-        // RNDIS Windows (FR, description localisée).
-        assert!(is_usb_tethering(
-            "Ethernet",
-            "Périphérique de partage Internet basé sur NDIS distant"
-        ));
-        // Nom convivial = marque du téléphone.
-        assert!(is_usb_tethering("Android", "Android USB Ethernet/RNDIS"));
-        assert!(is_usb_tethering("iPhone", "Apple Mobile Device Ethernet"));
-    }
-
-    #[test]
-    fn ne_detecte_pas_une_carte_reseau_normale() {
-        assert!(!is_usb_tethering("Wi-Fi", "Intel(R) Wi-Fi 6 AX201 160MHz"));
-        assert!(!is_usb_tethering(
-            "Ethernet",
-            "Realtek PCIe GbE Family Controller"
-        ));
-        assert!(!is_usb_tethering(
-            "vEthernet (Default Switch)",
-            "Hyper-V Virtual Ethernet Adapter"
-        ));
-        assert!(!is_usb_tethering("", ""));
+    fn resume_une_erreur_powershell_sur_une_ligne() {
+        // Sortie réelle: le message utile est la première ligne, le reste est
+        // du contexte (position, CategoryInfo) qui noie le journal.
+        let stderr = "\r\nGet-NetAdapter : Aucun objet MSFT_NetAdapter avec la \
+                      propriété 'Name' égal à « Ethernet 5 » n'a été trouvé.\r\n\
+                      Au caractère Ligne:1 : 7\r\n+ $if = Get-NetAdapter ...\r\n";
+        assert_eq!(
+            first_error_line(stderr),
+            "Get-NetAdapter : Aucun objet MSFT_NetAdapter avec la propriété \
+             'Name' égal à « Ethernet 5 » n'a été trouvé."
+        );
+        assert_eq!(first_error_line("   \r\n\t\n"), "");
     }
 
     #[test]

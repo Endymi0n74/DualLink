@@ -330,6 +330,23 @@ fn get_logs() -> Result<String, String> {
     Ok(logger::read_today_log())
 }
 
+#[derive(serde::Serialize)]
+struct LogUpdate {
+    length: u64,
+    content: String,
+}
+
+/// Log du jour, seulement s'il a grandi depuis `known_len`.
+///
+/// L'onglet Logs interrogeait le fichier toutes les 3 s et transférait tout son
+/// contenu (des centaines de Ko) même sans nouvelle ligne. `None` évite le
+/// transfert, le rendu et le défilement inutiles.
+#[tauri::command]
+fn get_logs_if_changed(known_len: u64) -> Result<Option<LogUpdate>, String> {
+    Ok(logger::read_today_log_since(known_len)
+        .map(|(length, content)| LogUpdate { length, content }))
+}
+
 /// Élévation du processus courant.
 ///
 /// Alimente la bannière d'avertissement du frontend: sans jeton élevé,
@@ -523,6 +540,7 @@ pub fn run() {
             get_settings,
             save_settings,
             get_logs,
+            get_logs_if_changed,
             get_app_version,
             get_elevation_status,
             get_log_files,

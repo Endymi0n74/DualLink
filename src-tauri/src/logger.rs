@@ -113,6 +113,23 @@ pub fn read_today_log() -> String {
     fs::read_to_string(log_file_path()).unwrap_or_default()
 }
 
+/// Contenu du log du jour, seulement si sa taille a changé.
+///
+/// Le fichier est ouvert en append seul: sa taille ne peut qu'augmenter (ou
+/// rester égale), ce qui en fait un indicateur de changement fiable sans lire
+/// le contenu. Retourne `(taille, contenu)` ou `None` si rien de neuf.
+pub fn read_today_log_since(known_len: u64) -> Option<(u64, String)> {
+    let path = log_file_path();
+    let len = fs::metadata(&path).ok()?.len();
+
+    if len == known_len {
+        return None;
+    }
+
+    let content = fs::read_to_string(&path).ok()?;
+    Some((len, content))
+}
+
 /// List all available log files
 pub fn list_log_files() -> Vec<String> {
     let dir = log_dir();

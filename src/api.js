@@ -60,6 +60,10 @@ export async function getLogs() {
   return invoke('get_logs');
 }
 
+export async function getLogsIfChanged(knownLen) {
+  return invoke('get_logs_if_changed', { knownLen });
+}
+
 export async function getAppVersion() {
   return invoke('get_app_version');
 }

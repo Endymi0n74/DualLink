@@ -11,7 +11,24 @@ let logFiles = [];
 let expertDetails = null;
 let selectedLogDate = '';
 let logAutoRefresh = null;
+// Taille du log du jour déjà affichée (octets). Sert au backend pour ne
+// renvoyer le contenu que lorsqu'une ligne a été ajoutée.
+let logLength = 0;
+let logRefreshBusy = false;
+// Signature du bandeau failover: évite de reconstruire le panneau à chaque
+// tick quand rien n'a changé.
+let lastFailoverSignature = '';
 const MAX_HISTORY = 10;
+const LOG_POLL_MS = 5000;
+const CANVAS_W = 500;
+const CANVAS_H = 120;
+// Adaptateurs qui ne portent pas une connexion internet réelle: les choisir
+// comme primaire/secondaire appliquerait des métriques à un commutateur
+// virtuel (Hyper-V, VMware, VPN).
+const VIRTUAL_ADAPTER_MARKERS = [
+  'virtual', 'vmware', 'hyper-v', 'vethernet', 'loopback',
+  'openvpn', 'tap-windows', 'wireguard', 'bluetooth'
+];
 let latencyHistory = [];
 let appVersion = '';
 // Élévation du processus: statique par session. `true` par défaut pour ne
@@ -72,22 +89,51 @@ function getMonitorForAdapter(name) {
   return monitorData.adapters.find(a => a.name === name);
 }
 
-function renderAdapterCard(adapter) {
+function isModeEligible(adapter) {
+  const haystack = ((adapter.name || '') + ' ' + (adapter.description || '')).toLowerCase();
+  return !VIRTUAL_ADAPTER_MARKERS.some(marker => haystack.includes(marker));
+}
+
+// Connectivité affichée. `internet_known` distingue « pas encore mesuré » de
+// « hors ligne »: au démarrage, afficher « Déconnecté » était faux.
+function connectivity() {
+  if (!monitorData || !monitorData.internet_known) {
+    return { known: false, online: false, label: 'Vérification…' };
+  }
+  const online = !!monitorData.internet_reachable;
+  return { known: true, online, label: online ? 'Connecté' : 'Déconnecté' };
+}
+
+// État d'un adaptateur. Une sonde absente ou dégradée ne prouve pas qu'il est
+// déconnecté: on affiche « État inconnu » au lieu de faire clignoter le badge.
+function adapterConnectivity(adapter) {
+  if (adapter.status === 'Disabled') return { cls: 'inactive', label: 'Désactivé' };
+  if (adapter.status !== 'Up') return { cls: 'inactive', label: 'Inactif' };
+
+  const mon = getMonitorForAdapter(adapter.name);
+  if (!mon) return { cls: 'unknown', label: 'Vérification…' };
+  if (mon.status_known === false) return { cls: 'unknown', label: 'État inconnu' };
+  if (mon.reachable) return { cls: 'connected', label: 'Connecté' };
+  return { cls: 'disconnected', label: 'Déconnecté' };
+}
+
+function renderAdapterCard(adapter, index) {
   const icon = getAdapterIcon(adapter.description);
   const mon = getMonitorForAdapter(adapter.name);
   const isUp = adapter.status === 'Up';
-  const connected = mon ? mon.reachable : false;
-  const latency = mon ? mon.latency_ms : null;
-  const latCls = latencyClass(latency);
-  return '<div class="adapter-card ' + (isUp ? '' : 'disabled') + '">'
+  const conn = adapterConnectivity(adapter);
+  const latency = mon && mon.status_known !== false ? mon.latency_ms : null;
+  const latencyHtml = latency != null
+    ? '<span class="adapter-latency ' + latencyClass(latency) + '">🎯 ' + latency + 'ms</span>'
+    : '<span class="adapter-latency" hidden></span>';
+  return '<div class="adapter-card ' + (isUp ? '' : 'disabled') + '" data-card-index="' + index + '">'
     + '<div class="adapter-icon">' + icon + '</div>'
     + '<div class="adapter-info">'
     + '<div class="adapter-name">' + adapter.name + '</div>'
     + '<div class="adapter-meta">'
     + '<span class="adapter-speed">⚡ ' + adapter.speed + '</span>'
-    + (latency != null ? '<span class="adapter-latency ' + latCls + '">🎯 ' + latency + 'ms</span>' : '')
-    + '<span class="adapter-connectivity ' + (connected ? 'connected' : 'disconnected') + '">'
-    + (connected ? '✅ Connecté' : '❌ Déconnecté') + '</span>'
+    + latencyHtml
+    + '<span class="adapter-connectivity ' + conn.cls + '">' + conn.label + '</span>'
     + '</div></div>'
     + '<label class="toggle">'
     + '<input type="checkbox" ' + (isUp ? 'checked' : '') + ' data-adapter="' + adapter.name + '" ' + (isUp && adapters.length <= 1 ? 'disabled' : '') + '>'
@@ -98,21 +144,44 @@ function renderAdapterCard(adapter) {
 function renderStatus() {
   const n = adapters.filter(a => a.status === 'Up').length;
   const lat = monitorData ? monitorData.overall_latency_ms : null;
-  const on = monitorData ? monitorData.internet_reachable : false;
+  const conn = connectivity();
   const lc = monitorData ? monitorData.last_check : 'N/A';
-  return '<div class="status-item"><span>🟢</span><span class="status-value">' + (on ? 'En ligne' : 'Hors ligne') + '</span></div>'
+  const icon = conn.known ? (conn.online ? '🟢' : '🔴') : '⏳';
+  return '<div class="status-item"><span>' + icon + '</span><span class="status-value">' + conn.label + '</span></div>'
     + '<div class="status-item"><span>⚡</span><span class="status-value">' + n + ' carte(s) active(s)</span></div>'
     + (lat != null ? '<div class="status-item"><span>🎯</span><span class="status-value ' + latencyClass(lat) + '">' + lat + 'ms</span></div>' : '')
     + '<div class="status-item"><span>🕐</span><span class="status-value">' + lc + '</span></div>';
 }
 
+function failoverSignature() {
+  if (!failoverState || !failoverState.config) return 'none';
+  const c = failoverState.config;
+  return [c.enabled, failoverState.is_failed_over, failoverState.failover_count,
+    c.primary_name, c.secondary_name].join('|');
+}
+
+function renderFailoverBanner() {
+  if (!failoverState || !failoverState.config || !failoverState.config.enabled) return '';
+  const active = failoverState.is_failed_over;
+  return '<div class="failover-banner ' + (active ? 'failover-active' : 'failover-standby') + '">'
+    + '<span class="failover-banner-icon">' + (active ? '⚡' : '🛡️') + '</span>'
+    + '<span class="failover-banner-text">'
+    + (active
+      ? '⚠️ FAILOVER ACTIF — Bascule sur ' + (failoverState.config.secondary_name || 'secondary')
+      : '✅ Failover en standby — ' + (failoverState.config.primary_name || 'primary') + ' actif')
+    + '</span>'
+    + '<span class="failover-banner-count">Switches: ' + (failoverState.failover_count || 0) + '</span>'
+    + '<button class="btn btn-sm btn-danger" id="btn-disable-failover">Désactiver</button>'
+    + '</div>';
+}
+
 export function render() {
   const app = document.getElementById('app');
-  const on = monitorData ? monitorData.internet_reachable : false;
+  const conn = connectivity();
   const noAdapters = adapters.length === 0;
   const adapterCards = noAdapters ?
     '<div class="empty-state"><div class="empty-state-icon">📡</div>Aucune interface détectée<br>Cliquez sur Actualiser</div>' :
-    adapters.map(renderAdapterCard).join('');
+    adapters.map((adapter, index) => renderAdapterCard(adapter, index)).join('');
 
   app.innerHTML = '';
   const header = document.createElement('div');
@@ -126,7 +195,7 @@ export function render() {
     + '<button class="nav-btn ' + (currentView === 'logs' ? 'active' : '') + '" id="nav-logs"><span>📋</span> Logs</button>'
     + '<button class="nav-btn ' + (currentView === 'expert' ? 'active' : '') + '" id="nav-expert"><span>🔬</span> Expert</button>'
     + '</div>'
-    + '<div class="header-status"><span class="status-dot ' + (on ? 'online' : '') + '"></span><span>' + (on ? 'Connecté' : 'Déconnecté') + '</span></div>';
+    + '<div class="header-status"><span class="status-dot ' + (conn.known ? (conn.online ? 'online' : '') : 'unknown') + '" id="header-dot"></span><span id="header-status-text">' + conn.label + '</span></div>';
   app.appendChild(header);
 
   if (!isElevated) {
@@ -152,25 +221,15 @@ export function render() {
   } else {
     // ── Main View ──
     mode.className = 'glass';
-    const foEnabled = failoverState && failoverState.config && failoverState.config.enabled;
-    const foActive = failoverState && failoverState.is_failed_over;
     mode.innerHTML = '<div class="section-title">Mode de mutualisation</div>'
       + '<div class="mode-selector">'
       + '<button class="mode-btn ' + (currentMode === 'none' ? 'active' : '') + '" data-mode="none"><span class="mode-btn-icon">🔀</span><div class="mode-btn-text"><span class="mode-btn-label">Individuel</span><span class="mode-btn-desc">Chaque carte gère son trafic</span></div></button>'
       + '<button class="mode-btn ' + (currentMode === 'load-balancing' ? 'active' : '') + '" data-mode="load-balancing"><span class="mode-btn-icon">⚖️</span><div class="mode-btn-text"><span class="mode-btn-label">Load Balancing</span><span class="mode-btn-desc">Répartir le trafic sur les deux</span></div></button>'
       + '<button class="mode-btn ' + (currentMode === 'failover' ? 'active' : '') + '" data-mode="failover"><span class="mode-btn-icon">🛡️</span><div class="mode-btn-text"><span class="mode-btn-label">Failover</span><span class="mode-btn-desc">Backup automatique si chute</span></div></button>'
       + '</div>'
-      + (foEnabled ? '<div class="failover-banner ' + (foActive ? 'failover-active' : 'failover-standby') + '">'
-        + '<span class="failover-banner-icon">' + (foActive ? '⚡' : '🛡️') + '</span>'
-        + '<span class="failover-banner-text">'
-        + (foActive
-          ? '⚠️ FAILOVER ACTIF — Bascule sur ' + (failoverState.config.secondary_name || 'secondary')
-          : '✅ Failover en standby — ' + (failoverState.config.primary_name || 'primary') + ' actif')
-        + '</span>'
-        + '<span class="failover-banner-count">Switches: ' + (failoverState.failover_count || 0) + '</span>'
-        + '<button class="btn btn-sm btn-danger" id="btn-disable-failover">Désactiver</button>'
-        + '</div>' : '');
+      + '<div id="failover-banner">' + renderFailoverBanner() + '</div>';
     app.appendChild(mode);
+    lastFailoverSignature = failoverSignature();
 
     const cards = document.createElement('div');
     cards.className = 'glass';
@@ -178,18 +237,20 @@ export function render() {
     app.appendChild(cards);
 
     const dash = document.createElement('div');
+    dash.id = 'dashboard-card';
     dash.innerHTML = renderDashboard();
     app.appendChild(dash);
 
     const status = document.createElement('div');
     status.className = 'glass status-bar';
-    status.innerHTML = '<div class="status-bar-left">' + renderStatus() + '</div>';
+    status.innerHTML = '<div class="status-bar-left" id="status-bar-content">' + renderStatus() + '</div>';
     app.appendChild(status);
 
+    const eligible = adapters.filter(a => a.status === 'Up' && isModeEligible(a)).length;
     const actions = document.createElement('div');
     actions.className = 'actions-bar';
     actions.innerHTML = '<button class="btn" id="btn-refresh"><span>🔄</span> Actualiser</button>'
-      + '<button class="btn btn-primary" id="btn-apply" ' + (adapters.length < 2 ? 'disabled' : '') + '><span>💾</span> Appliquer le mode</button>';
+      + '<button class="btn btn-primary" id="btn-apply" ' + (eligible < 2 ? 'disabled' : '') + '><span>💾</span> Appliquer le mode</button>';
     app.appendChild(actions);
   }
 
@@ -199,6 +260,10 @@ export function render() {
   app.appendChild(toasts);
 
   bindEvents();
+
+  if (currentView === 'main') {
+    drawDashboardCanvas();
+  }
 }
 
 function renderDashboard() {
@@ -229,14 +294,16 @@ function drawDashboardCanvas() {
   const canvas = document.getElementById('latency-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const W = canvas.width;
-  const H = canvas.height;
+  // Taille logique fixe: relire canvas.width après l'avoir multiplié par le
+  // DPR faisait grossir le canevas à chaque tick sur un écran 125/150 %.
+  const W = CANVAS_W;
+  const H = CANVAS_H;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   canvas.style.width = W + 'px';
   canvas.style.height = H + 'px';
-  ctx.scale(dpr, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   ctx.clearRect(0, 0, W, H);
 
@@ -345,31 +412,66 @@ function drawDashboardCanvas() {
 
 // ─── Logs ─────────────────────────────────────────────────────
 
-async function loadLogs() {
+function escapeHtml(value) {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function loadLogFiles() {
   try {
-    if (!selectedLogDate) {
-      logContent = await api.getLogs();
-    } else {
-      logContent = await api.getLogByDate(selectedLogDate);
-    }
     logFiles = await api.getLogFiles();
   } catch (err) {
+    logFiles = [];
+  }
+}
+
+// Charge le log affiché. `force` relit même sans changement (bouton 🔄).
+async function loadLogs(force) {
+  try {
+    if (selectedLogDate) {
+      logContent = await api.getLogByDate(selectedLogDate);
+      paintLogs();
+      return;
+    }
+
+    // Le backend ne renvoie le contenu que si le fichier a grandi.
+    const update = await api.getLogsIfChanged(force ? 0 : logLength);
+    if (!update) return;
+
+    logContent = update.content;
+    logLength = update.length;
+    paintLogs();
+  } catch (err) {
     logContent = 'Erreur: ' + err;
+    paintLogs();
+  }
+}
+
+// Repeint le journal sans reconstruire la vue: conserve la position de
+// lecture, sauf si l'utilisateur était déjà en bas.
+function paintLogs(initial) {
+  const el = document.getElementById('log-content');
+  if (!el) return;
+
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+  el.innerHTML = logContent.trim().split('\n').map(colorizeLogLine).join('\n');
+  if (initial || atBottom) el.scrollTop = el.scrollHeight;
+}
+
+async function pollLogs() {
+  // Un fichier daté ne change plus; seul le log du jour est interrogé.
+  if (currentView !== 'logs' || selectedLogDate || logRefreshBusy) return;
+  logRefreshBusy = true;
+  try {
+    await loadLogs();
+  } finally {
+    logRefreshBusy = false;
   }
 }
 
 function startLogAutoRefresh() {
   clearLogAutoRefresh();
-  logAutoRefresh = setInterval(async () => {
-    if (currentView === 'logs') {
-      await loadLogs();
-      const el = document.getElementById('log-content');
-      if (el) {
-        el.textContent = logContent;
-        el.scrollTop = el.scrollHeight;
-      }
-    }
-  }, 3000);
+  logAutoRefresh = setInterval(pollLogs, LOG_POLL_MS);
+  pollLogs();
 }
 
 function clearLogAutoRefresh() {
@@ -377,12 +479,20 @@ function clearLogAutoRefresh() {
 }
 
 function colorizeLogLine(line) {
-  if (line.includes('ERROR') || line.includes('PANIC')) return '<span class="log-error">' + line + '</span>';
-  if (line.includes('FAILOVER')) return '<span class="log-failover">' + line + '</span>';
-  if (line.includes('CMD')) return '<span class="log-cmd">' + line + '</span>';
-  if (line.includes('===')) return '<span class="log-separator">' + line + '</span>';
-  if (line.includes('Monitor')) return '<span class="log-monitor">' + line + '</span>';
-  return '<span class="log-normal">' + line + '</span>';
+  const safe = escapeHtml(line);
+  if (line.includes('ERROR') || line.includes('PANIC')) return '<span class="log-error">' + safe + '</span>';
+  if (line.includes('FAILOVER')) return '<span class="log-failover">' + safe + '</span>';
+  if (line.includes('CMD')) return '<span class="log-cmd">' + safe + '</span>';
+  if (line.includes('===')) return '<span class="log-separator">' + safe + '</span>';
+  if (line.includes('Monitor')) return '<span class="log-monitor">' + safe + '</span>';
+  return '<span class="log-normal">' + safe + '</span>';
+}
+
+function todayIso() {
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return d.getFullYear() + '-' + month + '-' + day;
 }
 
 function renderLogsView() {
@@ -393,7 +503,7 @@ function renderLogsView() {
     const sel = selectedLogDate === date ? ' selected' : '';
     return '<option value="' + date + '"' + sel + '>' + date + '</option>';
   }).join('');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   const container = document.createElement('div');
   container.className = 'glass log-card';
   container.innerHTML = '<div class="log-header">'
@@ -451,11 +561,28 @@ function renderSettingsView() {
     + '<button class="btn" id="btn-settings-defaults">🔄 Rétablir défauts</button>'
     + '<button class="btn btn-primary" id="btn-settings-save">💾 Sauvegarder</button>'
     + '</div>'
-    + '<div class="settings-note">⚠️ Le changement d\'intervalle nécessite un redémarrage de l\'application.</div>';
+    + '<div class="settings-note">Les réglages sont appliqués au prochain cycle de monitoring.</div>';
   return container;
 }
 
+function bindFailoverDisable() {
+  const btn = document.getElementById('btn-disable-failover');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    try {
+      failoverState = await api.disableAutoFailover();
+      showToast('🛡️ Auto Failover désactivé', 'info');
+      render();
+    } catch (err) {
+      showToast('❌ Erreur: ' + err, 'error');
+    }
+  });
+}
+
 function bindEvents() {
+  bindFailoverDisable();
+
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       currentMode = btn.dataset.mode;
@@ -469,7 +596,14 @@ function bindEvents() {
   const navSettings = document.getElementById('nav-settings');
   if (navSettings) navSettings.addEventListener('click', () => { currentView = 'settings'; clearLogAutoRefresh(); render(); });
   const navLogs = document.getElementById('nav-logs');
-  if (navLogs) navLogs.addEventListener('click', async () => { currentView = 'logs'; render(); await loadLogs(); startLogAutoRefresh(); });
+  if (navLogs) navLogs.addEventListener('click', async () => {
+    currentView = 'logs';
+    await loadLogFiles();
+    await loadLogs();
+    startLogAutoRefresh();
+    render();
+    paintLogs(true);
+  });
   const navExpert = document.getElementById('nav-expert');
   if (navExpert) navExpert.addEventListener('click', async () => { currentView = 'expert'; clearLogAutoRefresh(); await loadExpertDetails(); render(); });
 
@@ -482,7 +616,7 @@ function bindEvents() {
     const refresh = parseInt(document.getElementById('setting-refresh').value) || 30;
     try {
       settingsData = await api.saveSettings(interval, target, refresh);
-      showToast('✅ Settings sauvegardés (redémarrage pour interval)', 'success');
+      showToast('✅ Réglages sauvegardés', 'success');
     } catch (err) {
       showToast('❌ Erreur: ' + err, 'error');
     }
@@ -504,20 +638,20 @@ function bindEvents() {
   const logDateSelect = document.getElementById('log-date-select');
   if (logDateSelect) logDateSelect.addEventListener('change', async (e) => {
     selectedLogDate = e.target.value;
+    logLength = 0;
     await loadLogs();
     render();
-    startLogAutoRefresh();
+    paintLogs(true);
   });
   const btnLogRefresh = document.getElementById('btn-log-refresh');
   if (btnLogRefresh) btnLogRefresh.addEventListener('click', async () => {
-    await loadLogs();
-    const el = document.getElementById('log-content');
-    if (el) { el.innerHTML = logContent.trim().split('\n').map(colorizeLogLine).join('\n'); el.scrollTop = el.scrollHeight; }
+    await loadLogs(true);
+    paintLogs(true);
   });
   const btnLogAuto = document.getElementById('btn-log-auto');
   if (btnLogAuto) btnLogAuto.addEventListener('click', () => {
     if (logAutoRefresh) { clearLogAutoRefresh(); } else { startLogAutoRefresh(); }
-    render();
+    btnLogAuto.textContent = logAutoRefresh ? '⏸ Pause' : '▶ Auto';
   });
 
   document.querySelectorAll('.toggle input').forEach(input => {
@@ -528,12 +662,12 @@ function bindEvents() {
       try {
         if (checked) {
           await api.enableAdapter(name);
-          showToast('✅ ' + name + ' activé', 'success');
         } else {
           await api.disableAdapter(name);
-          showToast('⛔ ' + name + ' désactivé', 'success');
         }
+        // Après le rendu: un refresh avant le toast le faisait disparaître.
         await refreshAdapters();
+        showToast(checked ? '✅ ' + name + ' activé' : '⛔ ' + name + ' désactivé', 'success');
       } catch (err) {
         showToast('❌ Erreur: ' + err, 'error');
         e.target.checked = !checked;
@@ -549,22 +683,13 @@ function bindEvents() {
     showToast('🔄 Listes actualisées', 'info');
   });
 
-  const btnDisableFo = document.getElementById('btn-disable-failover');
-  if (btnDisableFo) btnDisableFo.addEventListener('click', async () => {
-    try {
-      failoverState = await api.disableAutoFailover();
-      showToast('🛡️ Auto Failover désactivé', 'info');
-      render();
-    } catch (err) {
-      showToast('❌ Erreur: ' + err, 'error');
-    }
-  });
-
   const btnApply = document.getElementById('btn-apply');
   if (btnApply) btnApply.addEventListener('click', async () => {
-    const active = adapters.filter(a => a.status === 'Up');
+    // Les cartes Up incluent les commutateurs virtuels (Hyper-V, VMware,
+    // VPN): appliquer une métrique dessus ne route aucun trafic.
+    const active = adapters.filter(a => a.status === 'Up' && isModeEligible(a));
     if (active.length < 2) {
-      showToast('⚠️ Il faut au moins 2 cartes actives', 'error');
+      showToast('⚠️ Il faut au moins 2 cartes réseau physiques actives', 'error');
       return;
     }
     try {
@@ -664,18 +789,76 @@ function renderExpertView() {
   return container;
 }
 
+// Met à jour les éléments vivants sans reconstruire la page.
+//
+// `render()` à chaque tick (5 s) détruisait les toasts, les écouteurs et la
+// position de lecture du journal: d'où l'impression que tout clignotait.
+function patchLiveView() {
+  const conn = connectivity();
+
+  const dot = document.getElementById('header-dot');
+  if (dot) {
+    dot.className = 'status-dot ' + (conn.known ? (conn.online ? 'online' : '') : 'unknown');
+  }
+
+  const headerText = document.getElementById('header-status-text');
+  if (headerText) headerText.textContent = conn.label;
+
+  if (currentView !== 'main') return;
+
+  document.querySelectorAll('[data-card-index]').forEach(card => {
+    const adapter = adapters[Number(card.dataset.cardIndex)];
+    if (!adapter) return;
+
+    const state = adapterConnectivity(adapter);
+    const badge = card.querySelector('.adapter-connectivity');
+    if (badge) {
+      badge.className = 'adapter-connectivity ' + state.cls;
+      badge.textContent = state.label;
+    }
+
+    const mon = getMonitorForAdapter(adapter.name);
+    const latency = mon && mon.status_known !== false ? mon.latency_ms : null;
+    const latEl = card.querySelector('.adapter-latency');
+    if (latEl) {
+      latEl.hidden = latency == null;
+      latEl.className = 'adapter-latency' + (latency != null ? ' ' + latencyClass(latency) : '');
+      latEl.textContent = latency != null ? '🎯 ' + latency + 'ms' : '';
+    }
+  });
+
+  const status = document.getElementById('status-bar-content');
+  if (status) status.innerHTML = renderStatus();
+
+  const dash = document.getElementById('dashboard-card');
+  if (dash) {
+    dash.innerHTML = renderDashboard();
+    drawDashboardCanvas();
+  }
+
+  if (failoverSignature() !== lastFailoverSignature) {
+    const banner = document.getElementById('failover-banner');
+    if (banner) banner.innerHTML = renderFailoverBanner();
+    lastFailoverSignature = failoverSignature();
+    bindFailoverDisable();
+  }
+}
+
 export function updateMonitorState(state) {
   monitorData = state;
   if (state.failover) failoverState = state.failover;
-  // Track latency history (last 10 measurements)
-  if (state.overall_latency_ms != null) {
-    latencyHistory.push({ ms: state.overall_latency_ms, time: state.last_check, ok: true });
-  } else {
-    latencyHistory.push({ ms: null, time: state.last_check, ok: state.internet_reachable });
+
+  // Tant que la première mesure n'a pas tranché, l'historique reste vide.
+  if (state.internet_known) {
+    if (state.internet_reachable && state.overall_latency_ms != null) {
+      latencyHistory.push({ ms: state.overall_latency_ms, time: state.last_check, ok: true });
+    } else {
+      latencyHistory.push({ ms: null, time: state.last_check, ok: state.internet_reachable });
+    }
+    if (latencyHistory.length > MAX_HISTORY) latencyHistory.shift();
   }
-  if (latencyHistory.length > MAX_HISTORY) latencyHistory.shift();
-  render();
-  drawDashboardCanvas();
+
+  patchLiveView();
 }
 
 export function showToast(message, type) {
