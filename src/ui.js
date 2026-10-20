@@ -22,7 +22,7 @@ let adapterRefreshBusy = false;
 // tick quand rien n'a changé.
 let lastFailoverSignature = '';
 const MAX_HISTORY = 10;
-const LOG_POLL_MS = 5000;
+const LOG_POLL_MS = 10000;
 const CANVAS_W = 500;
 const CANVAS_H = 120;
 // Adaptateurs qui ne portent pas une connexion internet réelle: les choisir
@@ -467,7 +467,8 @@ function paintLogs(initial) {
 
 async function pollLogs() {
   // Un fichier daté ne change plus; seul le log du jour est interrogé.
-  if (currentView !== 'logs' || selectedLogDate || logRefreshBusy) return;
+  // Fenêtre masquée ou onglet inactif: personne ne lit, on ne sonde pas.
+  if (currentView !== 'logs' || selectedLogDate || logRefreshBusy || document.hidden) return;
   logRefreshBusy = true;
   try {
     await loadLogs();

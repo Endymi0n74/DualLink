@@ -1,6 +1,6 @@
 [package]
 name = "duallink"
-version = "1.3.0"
+version = "1.3.1"
 description = "DualLink"
 edition = "2021"
 

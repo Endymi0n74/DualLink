@@ -223,6 +223,13 @@ cd dualink && npm run tauri:build
 - **Garde-fous**: ✅ `cargo fmt --check`, `cargo check`, `cargo clippy --all-targets -- -D warnings` propres; frontend `vite build` OK.
 - **Périmètre**: aucun processus en plus en régime normal (réutilise `list_adapters`); `Enable-NetAdapter` uniquement quand un adaptateur désactivé apparaît.
 
+## 📦 Release v1.3.1 (2026-10-20)
+- Retrait du montage USB automatique: Android seul décide d'exposer une carte RNDIS, le PC ne peut pas déclencher le partage.
+- Cible de connectivité par défaut passée à `1.1.1.1`: `8.8.8.8` perdait 50 à 100 % des paquets sur la ligne testée et faisait clignoter le badge.
+- Badge avec hystérésis, sondes limitées aux cartes avec passerelle, liste des cartes rafraîchie à chaud, journal sans rendu inutile (polling 10 s, suspendu fenêtre masquée).
+- Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badge README.
+- Vérifications: 36 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run build`, build release Windows.
+
 ## 📦 Release v1.3.0 (2026-10-16)
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badges README FR/EN.
 - Nouvelle fonctionnalité: montage automatique du partage USB (RNDIS) au branchement du téléphone.
