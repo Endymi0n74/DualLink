@@ -15,6 +15,9 @@ let logAutoRefresh = null;
 // renvoyer le contenu que lorsqu'une ligne a été ajoutée.
 let logLength = 0;
 let logRefreshBusy = false;
+// Une seule relecture de la liste des cartes à la fois: le monitor signale un
+// changement matériel, le rendu ne doit pas être relancé à chaque tick.
+let adapterRefreshBusy = false;
 // Signature du bandeau failover: évite de reconstruire le panneau à chaque
 // tick quand rien n'a changé.
 let lastFailoverSignature = '';
@@ -441,6 +444,10 @@ async function loadLogs(force) {
     logLength = update.length;
     paintLogs();
   } catch (err) {
+    // Échec transitoire (IPC, fichier verrouillé): repartir d'une lecture
+    // complète au prochain tick, sinon le message d'erreur reste figé tant
+    // que le fichier n'a pas grossi.
+    logLength = 0;
     logContent = 'Erreur: ' + err;
     paintLogs();
   }
@@ -453,8 +460,9 @@ function paintLogs(initial) {
   if (!el) return;
 
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+  const prevTop = el.scrollTop;
   el.innerHTML = logContent.trim().split('\n').map(colorizeLogLine).join('\n');
-  if (initial || atBottom) el.scrollTop = el.scrollHeight;
+  el.scrollTop = initial || atBottom ? el.scrollHeight : prevTop;
 }
 
 async function pollLogs() {
@@ -528,7 +536,7 @@ function renderLogsView() {
 }
 
 function renderSettingsView() {
-  const s = settingsData || { interval_secs: 5, ping_target: '8.8.8.8', adapter_refresh_secs: 30 };
+  const s = settingsData || { interval_secs: 5, ping_target: '1.1.1.1', adapter_refresh_secs: 30 };
   const container = document.createElement('div');
   container.className = 'glass settings-card';
   container.innerHTML = '<div class="section-title">⚙️ Configuration du monitoring</div>'
@@ -544,9 +552,9 @@ function renderSettingsView() {
     + '<div class="settings-group">'
     + '<label class="settings-label">Cible de ping</label>'
     + '<div class="settings-input-wrap">'
-    + '<input type="text" id="setting-target" class="settings-input settings-input-text" value="' + s.ping_target + '" placeholder="8.8.8.8">'
+    + '<input type="text" id="setting-target" class="settings-input settings-input-text" value="' + s.ping_target + '" placeholder="1.1.1.1">'
     + '</div>'
-    + '<span class="settings-hint">IP ou hostname pour tester la connectivité (défaut: 8.8.8.8)</span>'
+    + '<span class="settings-hint">IP ou hostname pour tester la connectivité (défaut: 1.1.1.1)</span>'
     + '</div>'
     + '<div class="settings-group">'
     + '<label class="settings-label">Refresh interfaces</label>'
@@ -612,7 +620,7 @@ function bindEvents() {
   const btnSave = document.getElementById('btn-settings-save');
   if (btnSave) btnSave.addEventListener('click', async () => {
     const interval = parseInt(document.getElementById('setting-interval').value) || 5;
-    const target = (document.getElementById('setting-target').value || '8.8.8.8').trim();
+    const target = (document.getElementById('setting-target').value || '1.1.1.1').trim();
     const refresh = parseInt(document.getElementById('setting-refresh').value) || 30;
     try {
       settingsData = await api.saveSettings(interval, target, refresh);
@@ -626,7 +634,7 @@ function bindEvents() {
   const btnDefaults = document.getElementById('btn-settings-defaults');
   if (btnDefaults) btnDefaults.addEventListener('click', async () => {
     try {
-      settingsData = await api.saveSettings(5, '8.8.8.8', 30);
+      settingsData = await api.saveSettings(5, '1.1.1.1', 30);
       showToast('🔄 Défauts restaurés', 'info');
       render();
     } catch (err) {
@@ -844,9 +852,28 @@ function patchLiveView() {
   }
 }
 
+// Compare deux listes de noms sans tenir compte de l'ordre renvoyé par
+// PowerShell.
+function sameAdapterNames(left, right) {
+  if (left.length !== right.length) return false;
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.every((name, i) => name === b[i]);
+}
+
 export function updateMonitorState(state) {
   monitorData = state;
   if (state.failover) failoverState = state.failover;
+
+  // Le monitor voit les cartes au même rythme que son refresh. Si sa liste
+  // diffère de celle affichée (téléphone branché, carte ajoutée/retirée),
+  // recharger les cartes une fois au lieu d'attendre un clic sur Actualiser.
+  const names = state.adapter_names || [];
+  if (names.length > 0 && currentView === 'main' && !adapterRefreshBusy
+      && !sameAdapterNames(names, adapters.map(a => a.name))) {
+    adapterRefreshBusy = true;
+    refreshAdapters().finally(() => { adapterRefreshBusy = false; });
+  }
 
   // Tant que la première mesure n'a pas tranché, l'historique reste vide.
   if (state.internet_known) {

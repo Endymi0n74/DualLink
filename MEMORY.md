@@ -210,6 +210,9 @@ cd dualink && npm run tauri:build
 - **Erreurs PowerShell**: `first_error_line()` ne remonte que la première ligne utile (fin des pavés cp850).
 - **Sélecteurs de mode**: les cartes virtuelles sont exclues du choix primaire/secondaire.
 - **Canvas**: le DPR n'est plus appliqué en boucle (le graphe ne grossit plus à chaque redraw en 125/150 %).
+- **Cible de connectivité par défaut** — Le badge d'en-tête oscillait alors que le Wi-Fi répondait: `8.8.8.8` perdait 50 à 100 % des paquets sur cette ligne (mesuré), tandis que `1.1.1.1` répondait à 16 ms sans perte. `DEFAULT_PING_TARGET` passe à `1.1.1.1`; valeurs par défaut, placeholder et bouton « Défauts » de l'UI alignés. Vérifié: 90 s sans bascule après redémarrage, contre 221 événements sur la session précédente.
+- **Liste des cartes vivante** — `MonitorState.adapter_names` publie tous les noms vus par le monitor; l'UI compare (ordre ignoré) et recharge `list_adapters` une fois quand le matériel change (téléphone branché, carte ajoutée/retirée), sans attendre « Actualiser ».
+- **Journal**: la position de lecture est restaurée explicitement si l'utilisateur n'était pas en bas; une erreur de lecture remet `logLength` à zéro pour retenter au tick suivant au lieu de figer le message.
 - **Tests**: 36 unitaires (`cargo test`), `cargo fmt --check`, `cargo clippy -D warnings` et `npm run build` propres.
 - **Vérifié en réel** (exe release relancé, PID 17504): une seule ligne `Monitor adapters refreshed`, zéro WARN, aucun pavé PowerShell sur 80 s. L'adaptateur RNDIS n'apparaissait pas: le partage USB côté téléphone était coupé.
 

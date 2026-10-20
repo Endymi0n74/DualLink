@@ -10,7 +10,11 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const PING_TIMEOUT_MS: u32 = 2000;
 
 /// Cible de test par défaut, également utilisée par les commandes ponctuelles.
-pub const DEFAULT_PING_TARGET: &str = "8.8.8.8";
+///
+/// 8.8.8.8 répondait par intermittence sur certaines lignes (perte mesurée
+/// 50-100 % alors que 1.1.1.1 restait à 0 %): le badge « Connecté » clignotait
+/// pour une panne qui n'existait pas. Cloudflare est la cible par défaut.
+pub const DEFAULT_PING_TARGET: &str = "1.1.1.1";
 
 /// Métrique appliquée au primaire en fonctionnement nominal.
 pub const METRIC_PRIMARY: u32 = 10;
@@ -289,7 +293,7 @@ pub fn test_connectivity_to(host: &str) -> Result<ConnectivityResult> {
     ping_host(host, PING_TIMEOUT_MS, None)
 }
 
-/// Test connectivity to the internet (default: 8.8.8.8)
+/// Test connectivity to the internet (default: 1.1.1.1)
 pub fn test_connectivity() -> Result<ConnectivityResult> {
     test_connectivity_to(DEFAULT_PING_TARGET)
 }

@@ -309,6 +309,12 @@ pub struct MonitorState {
     pub internet_known: bool,
     pub overall_latency_ms: Option<u64>,
     pub adapters: Vec<AdapterStatus>,
+    /// Noms de toutes les cartes vues par le monitor, y compris celles qui ne
+    /// sont pas connectées: le frontend compare cette liste à celle qu'il
+    /// affiche et recharge les cartes quand le matériel change (téléphone
+    /// branché, carte désactivée dans Windows, etc.).
+    #[serde(default)]
+    pub adapter_names: Vec<String>,
     pub last_check: String,
     pub failover: FailoverState,
 }
@@ -320,6 +326,7 @@ impl Default for MonitorState {
             internet_known: false,
             overall_latency_ms: None,
             adapters: Vec::new(),
+            adapter_names: Vec::new(),
             last_check: "Never".to_string(),
             failover: FailoverState::default(),
         }
@@ -658,6 +665,8 @@ pub fn start_monitor(
                     None
                 };
                 state_guard.adapters = cached_statuses.clone();
+                state_guard.adapter_names =
+                    cached_adapters.iter().map(|a| a.name.clone()).collect();
                 state_guard.last_check = now.clone();
 
                 let mut payload = MonitorState {
@@ -665,6 +674,7 @@ pub fn start_monitor(
                     internet_known: state_guard.internet_known,
                     overall_latency_ms: state_guard.overall_latency_ms,
                     adapters: state_guard.adapters.clone(),
+                    adapter_names: state_guard.adapter_names.clone(),
                     last_check: state_guard.last_check.clone(),
                     failover: state_guard.failover.clone(),
                 };
