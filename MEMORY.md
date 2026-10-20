@@ -229,6 +229,7 @@ cd dualink && npm run tauri:build
 - Badge avec hystérésis, sondes limitées aux cartes avec passerelle, liste des cartes rafraîchie à chaud, journal sans rendu inutile (polling 10 s, suspendu fenêtre masquée).
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badge README.
 - Vérifications: 36 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run build`, build release Windows.
+- Publication GitHub confirmée : [release v1.3.1](https://github.com/Endymi0n74/DualLink/releases/tag/v1.3.1), CI réussie (run 39478984625), trois artefacts : NSIS 2,32 Mio, MSI 3,46 Mio, ZIP portable 3,05 Mio. Notes de release détaillées (corrections + retrait du montage USB).
 
 ## 📦 Release v1.3.0 (2026-10-16)
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badges README FR/EN.
