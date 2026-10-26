@@ -301,6 +301,40 @@ pub fn is_valid_ping_target(target: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':'))
 }
 
+/// Résout une cible de sonde en adresse IPv4 numérique.
+///
+/// `route.exe ADD` n'accepte qu'une adresse numérique: épingler une route
+/// `/32` vers un nom d'hôte échoue, et une adresse IPv6 ne peut pas passer
+/// par une route IPv4. Une cible en nom d'hôte (réglage documenté) ferait
+/// donc échouer chaque sonde, et le failover basculerait sur le secondaire
+/// alors que le primaire répond.
+///
+/// La résolution a lieu à l'activation, pas à chaque tick: l'adresse obtenue
+/// est stable, alors qu'un nom DNS peut changer d'un tick à l'autre.
+pub fn resolve_ipv4(host: &str) -> Result<String> {
+    use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+
+    let trimmed = host.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("Cible de sonde vide"));
+    }
+    if let Ok(addr) = trimmed.parse::<Ipv4Addr>() {
+        return Ok(addr.to_string());
+    }
+
+    let addrs = (trimmed, 0u16)
+        .to_socket_addrs()
+        .with_context(|| format!("Résolution DNS impossible pour '{trimmed}'"))?;
+
+    addrs
+        .filter_map(|addr| match addr.ip() {
+            IpAddr::V4(v4) => Some(v4.to_string()),
+            IpAddr::V6(_) => None,
+        })
+        .next()
+        .ok_or_else(|| anyhow!("'{trimmed}' n'a pas d'adresse IPv4"))
+}
+
 /// Ping a host using native ping.exe (no PowerShell, no window)
 ///
 /// `source_ip` force l'adresse source, mais ne suffit pas à sélectionner
@@ -1068,6 +1102,20 @@ mod tests {
              'Name' égal à « Ethernet 5 » n'a été trouvé."
         );
         assert_eq!(first_error_line("   \r\n\t\n"), "");
+    }
+
+    #[test]
+    fn resolution_sonde_en_ipv4() {
+        // Adresse numérique: renvoyée telle quelle, sans DNS.
+        assert_eq!(resolve_ipv4("1.1.1.1").unwrap(), "1.1.1.1");
+        assert_eq!(resolve_ipv4("  8.8.8.8  ").unwrap(), "8.8.8.8");
+
+        // `localhost` résout en IPv4 sur toute machine Windows.
+        assert_eq!(resolve_ipv4("localhost").unwrap(), "127.0.0.1");
+
+        // Une cible IPv6 ou vide ne peut pas être épinglée par une route IPv4.
+        assert!(resolve_ipv4("::1").is_err());
+        assert!(resolve_ipv4("").is_err());
     }
 
     #[test]

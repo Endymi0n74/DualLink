@@ -194,6 +194,28 @@ async fn enable_auto_failover(
     // PowerShell tronquée.
     network::ensure_elevated().map_err(|e| e.to_string())?;
 
+    // La route hôte de test exige une adresse IPv4 numérique: `route.exe`
+    // refuse un nom d'hôte. Sans résolution, chaque sonde échouerait et le
+    // failover basculerait sur le secondaire alors que le primaire répond.
+    let ping_target = state.settings.read().await.ping_target.clone();
+    let resolved = blocking({
+        let target = ping_target.clone();
+        move || network::resolve_ipv4(&target).map_err(|e| format!("{e:#}"))
+    })
+    .await;
+
+    let probe_target = match resolved {
+        Ok(ip) => ip,
+        Err(e) => {
+            let msg = format!(
+                "Cible de test '{ping_target}' introuvable en IPv4: \
+                 le failover automatique ne peut pas être activé ({e:#})"
+            );
+            logger::log_file(&format!("ERROR enable_auto_failover: {msg}"));
+            return Err(msg);
+        }
+    };
+
     // Résolution des identifiants de route du primaire AVANT toute modification:
     // sans IP ni passerelle, la route hôte de test ne peut pas être créée et le
     // failover testerait la route par défaut, donc le secondaire. Mieux vaut
@@ -247,6 +269,7 @@ async fn enable_auto_failover(
             secondary_name,
             primary_gateway: Some(gateway),
             primary_ip: Some(primary_ip),
+            probe_target,
         },
         is_failed_over: false,
         failover_count: 0,
@@ -585,7 +608,11 @@ pub fn run() {
     // trafic vers la cible par le primaire, même coupé. Nettoyé au
     // démarrage; un échec est loggé mais ne bloque jamais le démarrage.
     if network::is_elevated() {
-        match network::cleanup_stale_test_routes(&loaded_settings.ping_target) {
+        // Les routes de test sont posées vers l'adresse résolue: nettoyer la
+        // cible brute (nom d'hôte) ne retirerait aucune route.
+        let cleanup_target = network::resolve_ipv4(&loaded_settings.ping_target)
+            .unwrap_or_else(|_| loaded_settings.ping_target.clone());
+        match network::cleanup_stale_test_routes(&cleanup_target) {
             Ok(0) => logger::log_file("Nettoyage routes orphelines: aucune route residuelle"),
             Ok(n) => logger::log_file(&format!(
                 "Nettoyage routes orphelines: {n} route(s) retiree(s)"

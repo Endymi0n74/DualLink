@@ -174,6 +174,13 @@ pub struct FailoverConfig {
     /// Adresse IPv4 du primaire, utilisée comme source des sondes.
     #[serde(default)]
     pub primary_ip: Option<String>,
+    /// Cible de sonde résolue en IPv4 à l'activation.
+    ///
+    /// La route hôte de test exige une adresse numérique: un nom d'hôte
+    /// échouerait à chaque tick. Vide dans une configuration héritée, auquel
+    /// cas la cible du tick est utilisée.
+    #[serde(default)]
+    pub probe_target: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,17 +379,31 @@ impl Default for MonitorState {
 static WARN_GATEWAY_MISSING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Cible réellement épinglée: l'IPv4 résolue à l'activation, sinon la cible
+/// du tick (configuration héritée, antérieure à ce champ).
+fn probe_host<'a>(config: &'a FailoverConfig, fallback: &'a str) -> &'a str {
+    if config.probe_target.trim().is_empty() {
+        fallback
+    } else {
+        &config.probe_target
+    }
+}
+
 /// Teste la joignabilité du PRIMAIRE via une route hôte épinglée.
 ///
 /// Retourne `None` quand la sonde n'a pas lieu d'être: failover désactivé, ou
 /// primaire sans passerelle connue (impossible d'épingler la route). Dans ce
 /// cas l'appelant ne prend aucune décision, plutôt que de décider sur une
 /// mesure qui ne teste pas le primaire.
+///
+/// La cible est l'IPv4 résolue à l'activation (`probe_target`): une route
+/// `/32` ne peut pas désigner un nom d'hôte.
 fn probe_primary(target: &str, config: &FailoverConfig) -> Option<bool> {
     if !config.enabled {
         return None;
     }
 
+    let target = probe_host(config, target);
     let gateway = config.primary_gateway.as_deref()?;
     if gateway.trim().is_empty() || gateway == "N/A" {
         if !WARN_GATEWAY_MISSING.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -1196,6 +1217,23 @@ mod tests {
         assert!(r.is_online());
 
         assert_eq!(r.observe(false), ReachabilityChange::Offline);
+    }
+
+    #[test]
+    fn sonde_utilise_la_cible_resolue() {
+        let mut config = FailoverConfig {
+            enabled: true,
+            probe_target: "1.1.1.1".to_string(),
+            ..Default::default()
+        };
+
+        // La cible du réglage peut être un nom d'hôte: la sonde doit utiliser
+        // l'IPv4 résolue, seule adresse acceptable pour une route /32.
+        assert_eq!(probe_host(&config, "dns.google"), "1.1.1.1");
+
+        // Configuration héritée (pas de champ): repli sur la cible du tick.
+        config.probe_target.clear();
+        assert_eq!(probe_host(&config, "1.1.1.1"), "1.1.1.1");
     }
 
     #[test]

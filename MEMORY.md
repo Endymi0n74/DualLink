@@ -141,6 +141,12 @@ cd dualink && npm run tauri:build
 
 30. **Montage automatique du partage USB** (fonctionnalité v1.3.0, **retirée le 2026-10-20**) — voir « Montage automatique du partage USB »: Windows ne peut pas activer le partage USB côté téléphone, la fonctionnalité n'avait donc pas de déclencheur fiable. Conservé comme historique.
 
+31. **Badge « Connecté » qui clignotait** — Un ping perdu isolé suffisait à afficher « Déconnecté ». Fixed: `Reachability` impose 2 échecs consécutifs pour perdre l'état et 1 succès pour le reprendre; `internet_known` affiche « Vérification… » avant la première mesure.
+
+32. **Sondes inutiles et WARN en boucle** — Les cartes sans passerelle (Hyper-V, VMware, WSL, VPN) étaient sondées, avec un WARN de repli `ping -S` à chaque refresh. Fixed: `probe_candidates` exige une passerelle IPv4 valide; `Monitor adapters refreshed` n'est loggé que si `adapter_signature` change.
+
+33. **Failover définitif sur le secondaire avec une cible en nom d'hôte** — La cible de ping peut être un nom d'hôte (réglage documenté), mais la sonde du primaire épingle une route `/32` via `route.exe ADD <cible> …`, qui n'accepte qu'une IPv4 numérique. L'échec de pose était traduit en « primaire injoignable » : bascule après 2 ticks, puis aucune restauration, chaque sonde échouant de la même façon. Fixed: `network::resolve_ipv4()` résout la cible à l'activation (`FailoverConfig.probe_target`), `enable_auto_failover` refuse l'activation sans adresse IPv4, et le nettoyage des routes orphelines au démarrage utilise la même adresse. Résolution unique: un nom DNS peut changer entre deux ticks et la route resterait épinglée sur une autre adresse.
+
 ## 🧩 Architecture Decisions
 - **No framework**: vanilla JS (no React/Vue) — lightweight, fast
 - **CSS minified inline**: single `styles.css` with glassmorphism theme
@@ -234,6 +240,11 @@ cd dualink && npm run tauri:build
 - **Réglages**: `usb_tether_auto` (défaut vrai) et `adb_path` (vide = détection). Bouton « Partage USB », « Tester ADB », « Écran de partage » dans l'UI.
 - **Tests**: 41 unitaires (parsing `adb devices`, choix de l'appareil, détection RNDIS, réglages ADB, backward compatible du `settings.json`).
 
+## 🩹 Session du 2026-10-26 — cible de sonde du failover
+- **Bug #33 corrigé**: cible de ping en nom d'hôte → `route.exe ADD` refuse le nom, la sonde du primaire échouait à chaque tick et le failover basculait définitivement sur le secondaire. `probe_primary` utilise désormais `probe_target` (IPv4 résolue à l'activation); `probe_host()` retombe sur la cible du tick si le champ est vide (configuration héritée).
+- **Réglage changé pendant un failover actif**: la cible résolue reste celle de l'activation, comme `primary_gateway` (backlog 11). Réactiver le failover pour en prendre une nouvelle.
+- **Tests**: 43 unitaires (`cargo test`), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` et `npm run build` propres. Non vérifié en réel: pose d'une route `/32` vers une IPv4 résolue (session sans droits admin).
+
 ## 📦 Release v1.3.2 (2026-10-20)
 - Partage USB du téléphone piloté par ADB: au branchement, la fonction USB du téléphone passe en `rndis` (10 s) et la carte RNDIS apparaît seule.
 - Délais maximaux sur tous les processus lancés (PowerShell 20 s, ping/route 10 s, adb 15 s): `Command::output()` attendait indéfiniment et pouvait geler le monitor.
@@ -282,7 +293,7 @@ cd dualink && npm run tauri:build
 8. **Historique métriques** — SQLite pour analyse long terme
 9. **Multi-langue** (FR/EN)
 10. **Crash reporting** — envoyer logs panic vers endpoint
-11. **Passerelle primaire figée** — `FailoverConfig.primary_gateway` est résolue à l'activation. Un changement de passerelle (reconnexion PPPoE, DHCP) invalide la route jusqu'à réactivation du failover
+11. **Passerelle primaire figée** — `FailoverConfig.primary_gateway` est résolue à l'activation. Un changement de passerelle (reconnexion PPPoE, DHCP) invalide la route jusqu'à réactivation du failover. Même chose pour `probe_target` (IPv4 de la cible de ping) : changer la cible pendant un failover actif n'a d'effet qu'à la réactivation
 12. **Renommer `configure_load_balancing`** — nom trompeur (répartition de priorité, pas de load balancing). Conservée pour ne pas casser le frontend
 13. ~~CI multiplateforme~~ ✅ Supprimé le 2026-10-11 — macOS et Linux ne sont plus construits (voir bug #25)
 
