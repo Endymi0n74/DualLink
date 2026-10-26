@@ -255,7 +255,7 @@ cd dualink && npm run tauri:build
 - **Réglages**: `settings.json` écrit dans `settings.json.tmp` puis renommé, au lieu d'être tronqué en place (JSON incomplet = retour silencieux aux défauts).
 - Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badges README FR/EN.
 - Vérifications: 44 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run build`, build release Windows (MSI 3,35 Mio, NSIS 2,25 Mio).
-- Publication GitHub: à confirmer après push du tag.
+- Publication GitHub confirmée : [release v1.3.3](https://github.com/Endymi0n74/DualLink/releases/tag/v1.3.3), CI réussie (run 40287261678), trois artefacts : NSIS 2,25 Mio, MSI 3,36 Mio, ZIP portable 2,96 Mio.
 
 ## 📦 Release v1.3.2 (2026-10-20)
 - Partage USB du téléphone piloté par ADB: au branchement, la fonction USB du téléphone passe en `rndis` (10 s) et la carte RNDIS apparaît seule.
