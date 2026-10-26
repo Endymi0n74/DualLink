@@ -132,8 +132,20 @@ impl Settings {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&path, json).map_err(|e| e.to_string())
+        write_atomic(&path, &json).map_err(|e| e.to_string())
     }
+}
+
+/// Écrit `data` dans `path` sans laisser de fichier à moitié écrit.
+///
+/// `std::fs::write` tronque puis écrit: un arrêt en cours d'écriture laisse
+/// un JSON incomplet, et `Settings::load` retombe alors silencieusement sur
+/// les défauts (réglages perdus). Écrire à côté puis renommer rend la
+/// sauvegarde atomique: `MoveFileEx` remplace la cible sous Windows.
+fn write_atomic(path: &std::path::Path, data: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, path)
 }
 
 fn dirs() -> Option<std::path::PathBuf> {
@@ -1104,6 +1116,25 @@ mod tests {
             r#"{"name": "Wi-Fi", "reachable": false, "latency_ms": null, "status_known": false}"#;
         let parsed: AdapterStatus = serde_json::from_str(unknown).unwrap();
         assert!(!parsed.status_known);
+    }
+
+    #[test]
+    fn sauvegarde_atomique_sans_residu() {
+        let dir = std::env::temp_dir().join(format!("dualink-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        // Deux écritures: la seconde remplace la première, sans résidu .tmp.
+        write_atomic(&path, "{\"interval_secs\":5}").unwrap();
+        write_atomic(&path, "{\"interval_secs\":30}").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"interval_secs\":30}"
+        );
+        assert!(!dir.join("settings.json.tmp").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

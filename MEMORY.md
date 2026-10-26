@@ -147,6 +147,8 @@ cd dualink && npm run tauri:build
 
 33. **Failover définitif sur le secondaire avec une cible en nom d'hôte** — La cible de ping peut être un nom d'hôte (réglage documenté), mais la sonde du primaire épingle une route `/32` via `route.exe ADD <cible> …`, qui n'accepte qu'une IPv4 numérique. L'échec de pose était traduit en « primaire injoignable » : bascule après 2 ticks, puis aucune restauration, chaque sonde échouant de la même façon. Fixed: `network::resolve_ipv4()` résout la cible à l'activation (`FailoverConfig.probe_target`), `enable_auto_failover` refuse l'activation sans adresse IPv4, et le nettoyage des routes orphelines au démarrage utilise la même adresse. Résolution unique: un nom DNS peut changer entre deux ticks et la route resterait épinglée sur une autre adresse.
 
+34. **Toast du partage USB jamais affiché** — `app.js` appelait `showToast(...)` dans l'écouteur `usb-tethering-armed` sans l'importer de `ui.js`: le bundle gardait un appel à une globale inexistante (`ReferenceError` à chaque activation ADB, promesse rejetée, aucun toast). Fixed: `showToast` ajouté à l'import; vérifié par REA (`Unresolved call target showToast` présent avant, 0 après reconstruction).
+
 ## 🧩 Architecture Decisions
 - **No framework**: vanilla JS (no React/Vue) — lightweight, fast
 - **CSS minified inline**: single `styles.css` with glassmorphism theme
@@ -240,10 +242,20 @@ cd dualink && npm run tauri:build
 - **Réglages**: `usb_tether_auto` (défaut vrai) et `adb_path` (vide = détection). Bouton « Partage USB », « Tester ADB », « Écran de partage » dans l'UI.
 - **Tests**: 41 unitaires (parsing `adb devices`, choix de l'appareil, détection RNDIS, réglages ADB, backward compatible du `settings.json`).
 
-## 🩹 Session du 2026-10-26 — cible de sonde du failover
+## 🩹 Session du 2026-10-26 — failover, réglages et toast USB
 - **Bug #33 corrigé**: cible de ping en nom d'hôte → `route.exe ADD` refuse le nom, la sonde du primaire échouait à chaque tick et le failover basculait définitivement sur le secondaire. `probe_primary` utilise désormais `probe_target` (IPv4 résolue à l'activation); `probe_host()` retombe sur la cible du tick si le champ est vide (configuration héritée).
 - **Réglage changé pendant un failover actif**: la cible résolue reste celle de l'activation, comme `primary_gateway` (backlog 11). Réactiver le failover pour en prendre une nouvelle.
-- **Tests**: 43 unitaires (`cargo test`), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` et `npm run build` propres. Non vérifié en réel: pose d'une route `/32` vers une IPv4 résolue (session sans droits admin).
+- **Bug #34 corrigé**: le toast du partage USB ne s'affichait jamais — `showToast` manquait dans l'import de `app.js`, l'appel restait une globale inexistante. Détecté par `rea analyze-javascript-application dist` (`Unresolved call target showToast`); après correctif et rebuild, plus aucune référence non résolue et l'appel pointe sur le binding importé.
+- **Réglages**: `settings.json` écrit dans `settings.json.tmp` puis renommé (`write_atomic`): un arrêt pendant l'écriture ne laisse plus un JSON tronqué, que `Settings::load` remplaçait silencieusement par les défauts. Test de non-régression: `sauvegarde_atomique_sans_residu`.
+- **Tests**: 44 unitaires (`cargo test`), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` et `npm run build` propres. Non vérifié en réel: pose d'une route `/32` vers une IPv4 résolue (session sans droits admin).
+
+## 📦 Release v1.3.3 (2026-10-26)
+- **Toast du partage USB**: `showToast` manquait dans l'import de `app.js`; le bundle gardait un appel à une globale inexistante (`ReferenceError` à chaque activation ADB). Détecté par `rea analyze-javascript-application dist`, disparu après reconstruction.
+- **Sonde du failover**: cible de ping en nom d'hôte → IPv4 résolue à l'activation (`probe_target`); `route.exe` n'accepte pas un nom, la sonde échouait et le failover basculait définitivement sur le secondaire.
+- **Réglages**: `settings.json` écrit dans `settings.json.tmp` puis renommé, au lieu d'être tronqué en place (JSON incomplet = retour silencieux aux défauts).
+- Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `app.manifest` et badges README FR/EN.
+- Vérifications: 44 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run build`, build release Windows (MSI 3,35 Mio, NSIS 2,25 Mio).
+- Publication GitHub: à confirmer après push du tag.
 
 ## 📦 Release v1.3.2 (2026-10-20)
 - Partage USB du téléphone piloté par ADB: au branchement, la fonction USB du téléphone passe en `rndis` (10 s) et la carte RNDIS apparaît seule.
