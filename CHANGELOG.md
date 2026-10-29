@@ -3,6 +3,25 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), versions selon
 [SemVer](https://semver.org/lang/fr/). Fenêtre Windows uniquement.
 
+## [1.3.5] — 2026-10-29
+
+Outillage de publication. **Aucun changement de code** : binaire fonctionnellement identique à la
+v1.3.4.
+
+### Modifié
+
+- Workflow de release : `actions/checkout` et `actions/setup-node` en `v7`, `actions/upload-artifact`
+  en `v7`, `actions/download-artifact` en `v8`, `softprops/action-gh-release` en `v3`. Toutes
+  déclarent `using: node24`, ce qui supprime l'avertissement de dépréciation Node 20 sur les runners
+  GitHub.
+- Node du build porté de 20 à 24 (Node 20 en fin de vie depuis avril 2026) ; `vite@5.4.21` et
+  `@tauri-apps/cli@2.12.2` déclarent une plage qui l'accepte.
+
+### Vérifié
+
+- Run CI `40898795301` (`workflow_dispatch` sur `master`) : build Windows réussi, `node v24.22.1`
+  installé, plus aucune annotation `Node.js 20 is deprecated`.
+
 ## [1.3.4] — 2026-10-29
 
 Documentation et outillage. **Aucun changement de code** : binaire fonctionnellement identique à
