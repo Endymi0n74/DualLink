@@ -249,6 +249,13 @@ cd dualink && npm run tauri:build
 - **Réglages**: `settings.json` écrit dans `settings.json.tmp` puis renommé (`write_atomic`): un arrêt pendant l'écriture ne laisse plus un JSON tronqué, que `Settings::load` remplaçait silencieusement par les défauts. Test de non-régression: `sauvegarde_atomique_sans_residu`.
 - **Tests**: 44 unitaires (`cargo test`), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` et `npm run build` propres. Non vérifié en réel: pose d'une route `/32` vers une IPv4 résolue (session sans droits admin).
 
+## 🔧 CI — runtime des actions (2026-10-29)
+- **Avertissement `Node.js 20 is deprecated`**: il ne vient pas de l'entrée `node-version` de `setup-node`, mais du **runtime des actions elles-mêmes** (`runs.using` dans leur `action.yml`). Changer `node-version: 20` en `24` ne l'aurait donc pas supprimé.
+- Actions réellement signalées par le run 40872170968: `actions/checkout@v4`, `actions/setup-node@v4`, `actions/upload-artifact@v4` (job build) et `actions/download-artifact@v4`, `softprops/action-gh-release@v2` (job release). `swatinem/rust-cache@v2` et `tauri-apps/tauri-action@v0` ne l'étaient pas.
+- Bump vers les versions `node24`: `checkout@v7`, `setup-node@v7`, `upload-artifact@v7`, `download-artifact@v8`, `action-gh-release@v3`. Vérifié dans chaque `action.yml` (runtime + entrées utilisées: `merge-multiple`, `if-no-files-found`, `files`, `body`) avant de changer, pour ne pas casser l'upload/download des artefacts.
+- Entrée `node-version` passée à `24` (Node 20 EOL depuis avril 2026; `vite@5.4.21` déclare `^18 || >=20`, `@tauri-apps/cli@2.12.2` `>=10` — les deux acceptent 24).
+- Non vérifié: aucun run CI déclenché depuis (le changement reste non commité).
+
 ## 📦 Release v1.3.4 (2026-10-29)
 - **Release de documentation**: aucun changement de code depuis la v1.3.3, binaires fonctionnellement identiques. Publiée à la demande explicite de l'utilisateur, pour disposer d'un journal des versions et d'un seul téléchargement par plateforme.
 - `CHANGELOG.md` créé (v1.2.0 → v1.3.4, sections Ajouté/Corrigé/Retiré/Modifié); README FR/EN: badge 1.3.4 et lien `CHANGELOG.md`.
