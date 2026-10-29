@@ -254,7 +254,10 @@ cd dualink && npm run tauri:build
 - Actions réellement signalées par le run 40872170968: `actions/checkout@v4`, `actions/setup-node@v4`, `actions/upload-artifact@v4` (job build) et `actions/download-artifact@v4`, `softprops/action-gh-release@v2` (job release). `swatinem/rust-cache@v2` et `tauri-apps/tauri-action@v0` ne l'étaient pas.
 - Bump vers les versions `node24`: `checkout@v7`, `setup-node@v7`, `upload-artifact@v7`, `download-artifact@v8`, `action-gh-release@v3`. Vérifié dans chaque `action.yml` (runtime + entrées utilisées: `merge-multiple`, `if-no-files-found`, `files`, `body`) avant de changer, pour ne pas casser l'upload/download des artefacts.
 - Entrée `node-version` passée à `24` (Node 20 EOL depuis avril 2026; `vite@5.4.21` déclare `^18 || >=20`, `@tauri-apps/cli@2.12.2` `>=10` — les deux acceptent 24).
-- Non vérifié: aucun run CI déclenché depuis (le changement reste non commité).
+- **Vérifié par le run 40898795301** (`workflow_dispatch` sur `master`, commit `3c60128`): build Windows réussi en 6 min 07, **zéro annotation** remontée par l'API `check-runs/*/annotations`, et aucune occurrence de `Node.js 20` ni `deprecat` dans les 1332 lignes de log. `setup-node@v7` a installé `node v24.22.1`.
+- **Méthode de mesure**: le même endpoint, appliqué au run 40872170968, remonte bien les deux `warning: Node.js 20 is deprecated` — le zéro sur le nouveau run est donc une absence réelle, pas un endpoint muet. Toujours comparer avant/après avec la même requête.
+- **Tester la CI sans publier de release**: `gh workflow run release.yml --ref master -f tag=...`. Sur une branche, le job `release` est sauté par son `if: startsWith(github.ref, 'refs/tags/v')` — les actions du job release (`download-artifact`, `action-gh-release`) ne sont donc **pas** exercées, seul leur `action.yml` garantit `node24`.
+- Reste cosmétique, hors périmètre: l'avertissement `ubuntu-latest will migrate to Ubuntu 26` (notice, pas warning) subsiste sur le job release.
 
 ## 📦 Release v1.3.4 (2026-10-29)
 - **Release de documentation**: aucun changement de code depuis la v1.3.3, binaires fonctionnellement identiques. Publiée à la demande explicite de l'utilisateur, pour disposer d'un journal des versions et d'un seul téléchargement par plateforme.
