@@ -112,6 +112,8 @@ jobs:
             > ⚠️ L'application nécessite les droits admin (UAC) pour gérer les cartes réseau.
 
             > Application Windows uniquement : elle s'appuie sur PowerShell, `ping.exe` et la table de routage Windows.
+
+            Journal des versions : [CHANGELOG.md](../blob/master/CHANGELOG.md)
           files: |
             artifacts/**/*.exe
             artifacts/**/*.msi

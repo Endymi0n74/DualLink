@@ -2,9 +2,9 @@
 
 **Windows network card manager** — Share and pool your internet connections (phone + Box, for example) with smart automatic failover.
 
-![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.3.3-brightgreen)
+![Tauri](https://img.shields.io/badge/Tauri-2-blue) ![Rust](https://img.shields.io/badge/Rust-1.77-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-1.3.4-brightgreen)
 
-[🇫🇷 Français](README.md) · **🇬🇧 English**
+[🇫🇷 Français](README.md) · **🇬🇧 English** · [📅 Changelog](CHANGELOG.md)
 
 ---
 
