@@ -256,8 +256,17 @@ cd dualink && npm run tauri:build
 - Entrée `node-version` passée à `24` (Node 20 EOL depuis avril 2026; `vite@5.4.21` déclare `^18 || >=20`, `@tauri-apps/cli@2.12.2` `>=10` — les deux acceptent 24).
 - **Vérifié par le run 40898795301** (`workflow_dispatch` sur `master`, commit `3c60128`): build Windows réussi en 6 min 07, **zéro annotation** remontée par l'API `check-runs/*/annotations`, et aucune occurrence de `Node.js 20` ni `deprecat` dans les 1332 lignes de log. `setup-node@v7` a installé `node v24.22.1`.
 - **Méthode de mesure**: le même endpoint, appliqué au run 40872170968, remonte bien les deux `warning: Node.js 20 is deprecated` — le zéro sur le nouveau run est donc une absence réelle, pas un endpoint muet. Toujours comparer avant/après avec la même requête.
-- **Tester la CI sans publier de release**: `gh workflow run release.yml --ref master -f tag=...`. Sur une branche, le job `release` est sauté par son `if: startsWith(github.ref, 'refs/tags/v')` — les actions du job release (`download-artifact`, `action-gh-release`) ne sont donc **pas** exercées, seul leur `action.yml` garantit `node24`.
+- **Tester la CI sans publier de release**: `gh workflow run release.yml --ref master -f tag=...`. Sur une branche, le job `release` est sauté par son `if: startsWith(github.ref, 'refs/tags/v')` — les actions du job release (`download-artifact`, `action-gh-release`) ne sont donc **pas** exercées; seul leur `action.yml` garantit `node24`.
+- **Confirmé sur un vrai run de release** (run 40902420943, tag v1.3.5): les cinq actions ont tourné, `##[group]Run actions/download-artifact@v8` compris, et `Node.js 20` compte **2 occurrences** dans le log du run de la v1.3.4 contre **0** dans celui de la v1.3.5.
+- **Faux positif à connaître**: `grep -i deprecat` sur les logs remonte un `[DEP0005] DeprecationWarning: Buffer() is deprecated` émis **dans** `download-artifact`. Il était déjà là en `v4` (même run 40872170968, `release/UNKNOWN STEP`): il vient de l'action, pas du workflow. Ne pas le confondre avec l'avertissement Node 20, qui lui est une annotation du runner.
 - Reste cosmétique, hors périmètre: l'avertissement `ubuntu-latest will migrate to Ubuntu 26` (notice, pas warning) subsiste sur le job release.
+
+## 📦 Release v1.3.5 (2026-10-29)
+- **Release d'outillage**: aucun changement de code, binaire fonctionnellement identique à la v1.3.4. Sert à ce que le correctif node24 du workflow arrive dans un build réellement publié.
+- Version synchronisée dans les six fichiers de métadonnées (`app.manifest`: `1.3.5.0`) + badges README FR/EN; entrée `1.3.5` en tête de `CHANGELOG.md`.
+- Vérifications avant tag: 44 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` (compile bien `duallink v1.3.5`), `npm run build` (27,60 kB).
+- CI run 40902420943 réussie (build 3 min 05, release 16 s), trois artefacts: NSIS 2,36 Mio, MSI 3,52 Mio, ZIP portable 3,10 Mio. Publiée: [release v1.3.5](https://github.com/Endymi0n74/DualLink/releases/tag/v1.3.5), marquée *Latest*.
+- Reste: la *notice* `ubuntu-latest will migrate to Ubuntu 26` (information runner, pas un avertissement du projet).
 
 ## 📦 Release v1.3.4 (2026-10-29)
 - **Release de documentation**: aucun changement de code depuis la v1.3.3, binaires fonctionnellement identiques. Publiée à la demande explicite de l'utilisateur, pour disposer d'un journal des versions et d'un seul téléchargement par plateforme.
