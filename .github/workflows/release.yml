@@ -113,7 +113,7 @@ jobs:
 
             > Application Windows uniquement : elle s'appuie sur PowerShell, `ping.exe` et la table de routage Windows.
 
-            Journal des versions : [CHANGELOG.md](../blob/master/CHANGELOG.md)
+            Journal des versions : [CHANGELOG.md](https://github.com/Endymi0n74/DualLink/blob/master/CHANGELOG.md)
           files: |
             artifacts/**/*.exe
             artifacts/**/*.msi

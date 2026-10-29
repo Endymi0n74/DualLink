@@ -249,6 +249,15 @@ cd dualink && npm run tauri:build
 - **Réglages**: `settings.json` écrit dans `settings.json.tmp` puis renommé (`write_atomic`): un arrêt pendant l'écriture ne laisse plus un JSON tronqué, que `Settings::load` remplaçait silencieusement par les défauts. Test de non-régression: `sauvegarde_atomique_sans_residu`.
 - **Tests**: 44 unitaires (`cargo test`), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` et `npm run build` propres. Non vérifié en réel: pose d'une route `/32` vers une IPv4 résolue (session sans droits admin).
 
+## 📦 Release v1.3.4 (2026-10-29)
+- **Release de documentation**: aucun changement de code depuis la v1.3.3, binaires fonctionnellement identiques. Publiée à la demande explicite de l'utilisateur, pour disposer d'un journal des versions et d'un seul téléchargement par plateforme.
+- `CHANGELOG.md` créé (v1.2.0 → v1.3.4, sections Ajouté/Corrigé/Retiré/Modifié); README FR/EN: badge 1.3.4 et lien `CHANGELOG.md`.
+- Version synchronisée dans `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock`, `tauri.conf.json` et `app.manifest` (`1.3.4.0`).
+- **Anciennes releases supprimées**: `gh release delete v1.3.2|v1.3.3 --cleanup-tag --yes` puis `git tag -d v1.3.2 v1.3.3`. `git ls-remote --tags` ne liste plus que `v1.3.4` : un clone ancien doit refetcher les tags (`git fetch --prune --tags`), sinon `v1.3.3` semble encore local.
+- **Piège du corps de release**: un lien relatif (`../blob/master/CHANGELOG.md`) ne résout pas dans une release GitHub. Utiliser l'URL absolue `https://github.com/Endymi0n74/DualLink/blob/master/CHANGELOG.md` (corrigé dans `release.yml` et dans la release publiée).
+- Vérifications: 44 tests, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run build` (27,60 kB).
+- Publication GitHub confirmée : [release v1.3.4](https://github.com/Endymi0n74/DualLink/releases/tag/v1.3.4), CI réussie (run 40872170968), trois artefacts : NSIS 2,36 Mio, MSI 3,52 Mio, ZIP portable 3,10 Mio.
+
 ## 📦 Release v1.3.3 (2026-10-26)
 - **Toast du partage USB**: `showToast` manquait dans l'import de `app.js`; le bundle gardait un appel à une globale inexistante (`ReferenceError` à chaque activation ADB). Détecté par `rea analyze-javascript-application dist`, disparu après reconstruction.
 - **Sonde du failover**: cible de ping en nom d'hôte → IPv4 résolue à l'activation (`probe_target`); `route.exe` n'accepte pas un nom, la sonde échouait et le failover basculait définitivement sur le secondaire.
